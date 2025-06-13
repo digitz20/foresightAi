@@ -1,3 +1,4 @@
+
 import type { SummarizeNewsSentimentOutput } from '@/ai/flows/summarize-news-sentiment';
 import { Newspaper, AlertTriangle, ShieldAlert } from 'lucide-react';
 import DashboardCard from './DashboardCard';
@@ -12,7 +13,7 @@ type SentimentAnalysisCardProps = {
 export default function SentimentAnalysisCard({ data, isLoading, currencyPair }: SentimentAnalysisCardProps) {
   const renderSentiment = () => {
     if (isLoading) {
-      return <p className="text-muted-foreground text-center">Analyzing sentiment...</p>;
+      return <p className="text-muted-foreground text-center">Analyzing sentiment for {currencyPair}...</p>;
     }
     if (!data) {
       return (
@@ -23,14 +24,14 @@ export default function SentimentAnalysisCard({ data, isLoading, currencyPair }:
       );
     }
 
-    if (data.error) {
+    if (data.error && (!data.overallSentiment || data.overallSentiment === 'Unknown')) {
       return (
         <div className="flex flex-col items-center justify-center text-destructive">
           <ShieldAlert className="h-8 w-8 mb-2" />
           <p className="font-semibold">Sentiment Analysis Error</p>
           <p className="text-sm text-center px-2">{data.error}</p>
-           {data.summary && data.summary.startsWith('Sentiment analysis failed:') && (
-             <p className="mt-1 text-xs text-muted-foreground px-2">Summary unavailable.</p>
+           {data.summary && (data.summary.startsWith('Sentiment analysis failed:') || data.summary.includes('Analysis error:')) && (
+             <p className="mt-1 text-xs text-muted-foreground px-2">Summary unavailable due to error.</p>
           )}
         </div>
       );
@@ -41,7 +42,7 @@ export default function SentimentAnalysisCard({ data, isLoading, currencyPair }:
     let badgeVariant: "default" | "destructive" | "secondary" | "outline" = "secondary";
     if (overallSentiment.toLowerCase().includes('positive')) badgeVariant = 'default';
     else if (overallSentiment.toLowerCase().includes('negative')) badgeVariant = 'destructive';
-    else if (overallSentiment.toLowerCase().includes('unknown')) badgeVariant = 'outline';
+    else if (overallSentiment.toLowerCase().includes('unknown') || overallSentiment.toLowerCase().includes('neutral') || overallSentiment.toLowerCase().includes('mixed')) badgeVariant = 'outline';
 
 
     return (
@@ -53,7 +54,7 @@ export default function SentimentAnalysisCard({ data, isLoading, currencyPair }:
             className={
               overallSentiment.toLowerCase().includes('positive') ? 'bg-accent/20 border-accent text-accent-foreground' : 
               overallSentiment.toLowerCase().includes('negative') ? 'bg-destructive/20 border-destructive text-destructive-foreground' : 
-              overallSentiment.toLowerCase().includes('unknown') ? 'border-dashed' :
+              (overallSentiment.toLowerCase().includes('unknown') || overallSentiment.toLowerCase().includes('neutral') || overallSentiment.toLowerCase().includes('mixed')) ? 'border-dashed text-muted-foreground' :
               'bg-muted/20 border-muted text-muted-foreground'
             }
           >
@@ -64,7 +65,10 @@ export default function SentimentAnalysisCard({ data, isLoading, currencyPair }:
           <h4 className="text-sm font-medium text-muted-foreground mb-1">Summary:</h4>
           <p className="text-sm text-foreground bg-muted/30 p-3 rounded-md">{summary}</p>
         </div>
-        <p className="text-xs text-muted-foreground mt-1 text-center">Analysis based on NewsAPI.org headlines</p>
+        <p className="text-xs text-muted-foreground mt-1 text-center">
+          Sentiment based on headlines from NewsAPI.org.
+          {data.error && overallSentiment !== 'Unknown' && <span className="block text-destructive/80 text-xxs"> (Note: Some news fetching issues: {data.error.substring(0,50)}...)</span>}
+        </p>
       </div>
     );
   };
@@ -75,3 +79,4 @@ export default function SentimentAnalysisCard({ data, isLoading, currencyPair }:
     </DashboardCard>
   );
 }
+
