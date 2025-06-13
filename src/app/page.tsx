@@ -14,7 +14,7 @@ import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard'
 import EconomicIndicatorCard, { type EconomicIndicatorData as FetchedEconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard'; // Renamed to avoid clash
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from "@/hooks/use-toast";
 
@@ -311,6 +311,8 @@ export default function HomePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const { toast } = useToast();
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
+
 
   // API Key States
   const [polygonApiKey, setPolygonApiKey] = useState<string | null>(null);
@@ -472,7 +474,7 @@ export default function HomePage() {
          setLastError(null);
       }
       setIsRefreshing(false);
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, selectedAsset, selectedTimeframe, toast]); // Removed loadData from here as it creates a circular dependency risk or too many re-renders. handleRefresh itself does what loadData does in this specific context.
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, selectedAsset, selectedTimeframe, toast]);
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
@@ -483,8 +485,8 @@ export default function HomePage() {
 
   // Auto-refresh logic
   useEffect(() => {
-    if (isKeySetupPhase || isLoading || isRefreshing || !aiData) {
-      return; // Don't run if setting up keys, already loading/refreshing, or no initial data
+    if (!isAutoRefreshEnabled || isKeySetupPhase || isLoading || isRefreshing || !aiData) {
+      return; // Don't run if auto-refresh disabled, setting up keys, already loading/refreshing, or no initial data
     }
 
     const getIntervalMs = (timeframeId: string): number => {
@@ -510,7 +512,7 @@ export default function HomePage() {
       clearInterval(intervalId);
       // console.log(`Cleared auto-refresh for ${selectedAsset.name} (${selectedTimeframe.name})`);
     };
-  }, [selectedAsset, selectedTimeframe, handleRefresh, isKeySetupPhase, isLoading, isRefreshing, aiData]);
+  }, [selectedAsset, selectedTimeframe, handleRefresh, isKeySetupPhase, isLoading, isRefreshing, aiData, isAutoRefreshEnabled]);
 
 
   const ApiKeyInputGroup = ({
@@ -661,14 +663,30 @@ export default function HomePage() {
               ))}
             </div>
           </div>
-          <Button onClick={handleRefresh} disabled={isDataFetchingDisabled} className="self-end" size="sm">
-            {isRefreshing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Refresh Data for {selectedAsset.name} ({selectedTimeframe.name})
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2 items-center">
+            <Button 
+                onClick={() => setIsAutoRefreshEnabled(prev => !prev)} 
+                disabled={isKeySetupPhase} 
+                className="self-end" 
+                size="sm"
+                variant={isAutoRefreshEnabled ? "secondary" : "default"}
+            >
+                {isAutoRefreshEnabled ? (
+                    <PauseCircle className="mr-2 h-4 w-4" />
+                ) : (
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                )}
+                {isAutoRefreshEnabled ? 'Stop Auto-Refresh' : 'Start Auto-Refresh'}
+            </Button>
+            <Button onClick={handleRefresh} disabled={isDataFetchingDisabled} className="self-end" size="sm">
+                {isRefreshing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                Refresh Data for {selectedAsset.name} ({selectedTimeframe.name})
+            </Button>
+          </div>
         </div>
 
         {lastError && (
