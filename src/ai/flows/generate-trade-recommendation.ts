@@ -31,6 +31,7 @@ export type GenerateTradeRecommendationInput = z.infer<
 const GenerateTradeRecommendationOutputSchema = z.object({
   recommendation: z.enum(['BUY', 'SELL', 'HOLD']).describe('Trade recommendation.'),
   reason: z.string().describe('Reasoning behind the recommendation.'),
+  error: z.string().optional().describe('An error message if the generation failed.'),
 });
 
 export type GenerateTradeRecommendationOutput = z.infer<
@@ -43,10 +44,12 @@ export async function generateTradeRecommendation(
   return generateTradeRecommendationFlow(input);
 }
 
-const prompt = ai.definePrompt({
+const recommendationPrompt = ai.definePrompt({
   name: 'generateTradeRecommendationPrompt',
   input: {schema: GenerateTradeRecommendationInputSchema},
-  output: {schema: GenerateTradeRecommendationOutputSchema},
+  // The prompt's output schema remains focused on what the LLM should ideally produce.
+  // The flow will handle adding the error field if necessary.
+  output: {schema: GenerateTradeRecommendationOutputSchema.omit({ error: true })},
   prompt: `You are an AI-powered Forex trading assistant. Based on the provided market data, sentiment analysis, and economic indicators, provide a concise trade recommendation (BUY, SELL, or HOLD) and the reasoning behind it.
 
   Market Data:
@@ -73,10 +76,32 @@ const generateTradeRecommendationFlow = ai.defineFlow(
   {
     name: 'generateTradeRecommendationFlow',
     inputSchema: GenerateTradeRecommendationInputSchema,
-    outputSchema: GenerateTradeRecommendationOutputSchema,
+    outputSchema: GenerateTradeRecommendationOutputSchema, // Flow guarantees this schema, including error field
   },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+  async (input): Promise<GenerateTradeRecommendationOutput> => {
+    try {
+      const {output} = await recommendationPrompt(input);
+      if (!output || !output.recommendation || !output.reason) {
+         console.error('generateTradeRecommendationPrompt returned invalid or incomplete output.');
+         return {
+           recommendation: 'HOLD',
+           reason: 'AI analysis failed due to incomplete data from the model. Defaulting to HOLD.',
+           error: 'AI prompt failed to return valid output structure.',
+         };
+      }
+      return {...output, error: undefined }; // Successfully generated, no error
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error(`Error in generateTradeRecommendationFlow: ${errorMessage}`);
+      let displayError = 'An unexpected error occurred during AI analysis.';
+      if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('quota') || errorMessage.toLowerCase().includes('rate limit')) {
+        displayError = 'AI rate limit exceeded. Please try again in a few moments.';
+      }
+      return {
+        recommendation: 'HOLD', // Default recommendation on error
+        reason: `AI analysis failed: ${displayError}. Defaulting to HOLD.`,
+        error: displayError,
+      };
+    }
   }
 );

@@ -21,6 +21,7 @@ const SummarizeNewsSentimentOutputSchema = z.object({
   summary: z
     .string()
     .describe('A concise summary of the news headlines and their potential impact on the currency pair.'),
+  error: z.string().optional().describe('An error message if the generation failed.'),
 });
 
 export type SummarizeNewsSentimentOutput = z.infer<typeof SummarizeNewsSentimentOutputSchema>;
@@ -29,13 +30,13 @@ export async function summarizeNewsSentiment(input: SummarizeNewsSentimentInput)
   return summarizeNewsSentimentFlow(input);
 }
 
-const summarizeNewsSentimentPrompt = ai.definePrompt({
+const sentimentPrompt = ai.definePrompt({
   name: 'summarizeNewsSentimentPrompt',
   input: {
     schema: SummarizeNewsSentimentInputSchema,
   },
   output: {
-    schema: SummarizeNewsSentimentOutputSchema,
+    schema: SummarizeNewsSentimentOutputSchema.omit({ error: true }),
   },
   prompt: `You are an AI assistant that analyzes news headlines related to a specific currency pair and summarizes the overall market sentiment.
 
@@ -56,8 +57,30 @@ const summarizeNewsSentimentFlow = ai.defineFlow(
     inputSchema: SummarizeNewsSentimentInputSchema,
     outputSchema: SummarizeNewsSentimentOutputSchema,
   },
-  async input => {
-    const {output} = await summarizeNewsSentimentPrompt(input);
-    return output!;
+  async (input): Promise<SummarizeNewsSentimentOutput> => {
+    try {
+      const {output} = await sentimentPrompt(input);
+      if (!output || !output.overallSentiment || !output.summary) {
+        console.error('summarizeNewsSentimentPrompt returned invalid or incomplete output.');
+        return {
+          overallSentiment: 'Neutral',
+          summary: 'Sentiment analysis failed due to incomplete data from the model.',
+          error: 'AI prompt failed to return valid sentiment structure.',
+        };
+      }
+      return {...output, error: undefined};
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error(`Error in summarizeNewsSentimentFlow: ${errorMessage}`);
+      let displayError = 'An unexpected error occurred during sentiment analysis.';
+       if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('quota') || errorMessage.toLowerCase().includes('rate limit')) {
+        displayError = 'AI rate limit exceeded for sentiment analysis. Please try again later.';
+      }
+      return {
+        overallSentiment: 'Unknown',
+        summary: `Sentiment analysis failed: ${displayError}`,
+        error: displayError,
+      };
+    }
   }
 );
