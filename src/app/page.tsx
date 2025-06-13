@@ -266,21 +266,10 @@ async function fetchCombinedDataForAsset(
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    // Derive sentiment score
-    let derivedSentimentScore = 0.0;
-    const sentimentText = newsSentiment?.overallSentiment?.toLowerCase();
-    if (newsSentiment && !newsSentiment.error && sentimentText) {
-      if (sentimentText.includes('positive')) {
-        derivedSentimentScore = 0.7;
-      } else if (sentimentText.includes('negative')) {
-        derivedSentimentScore = -0.7;
-      } else if (sentimentText.includes('mixed')) {
-        derivedSentimentScore = 0.1; 
-      }
-      // Neutral or Unknown will remain 0.0
-    }
+    // Use sentiment score directly from newsSentiment AI output
+    const derivedSentimentScore = newsSentiment?.sentimentScore ?? 0.0;
 
-    // Estimate interest rate
+    // Estimate interest rate (remains an estimation due to API limitations for live benchmark rates)
     let derivedInterestRate = 0.5; // Default fallback
     const primaryCurrencyForRate = asset.economicIds.openexchangerates?.toUpperCase() || asset.economicIds.exchangerateapi?.toUpperCase();
 
@@ -294,7 +283,7 @@ async function fetchCombinedDataForAsset(
             case 'CAD': derivedInterestRate = 0.9; break;
             case 'CHF': derivedInterestRate = 0.25; break;
             case 'NZD': derivedInterestRate = 0.85; break;
-            case 'SGD': derivedInterestRate = 0.6; break; // Added SGD estimate
+            case 'SGD': derivedInterestRate = 0.6; break;
             case 'XAU': case 'XAG': case 'BTC': derivedInterestRate = 0.25; break; 
             case 'WTI': derivedInterestRate = 0.5; break; 
             default: derivedInterestRate = 0.5;
@@ -351,7 +340,7 @@ async function fetchCombinedDataForAsset(
     };
     return {
         tradeRecommendation: { recommendation: 'HOLD', reason: `Analysis error: ${finalCombinedError}`, error: finalCombinedError },
-        newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${finalCombinedError}`, error: finalCombinedError },
+        newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${finalCombinedError}`, sentimentScore: 0.0, error: finalCombinedError },
         marketOverviewData: { assetName: asset.name, timeframe: timeframeId, error: finalCombinedError, sourceProvider: 'Unknown' },
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },

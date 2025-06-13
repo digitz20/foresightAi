@@ -21,6 +21,9 @@ const SummarizeNewsSentimentOutputSchema = z.object({
   summary: z
     .string()
     .describe('A concise summary of the news headlines and their potential impact on the currency pair.'),
+  sentimentScore: z
+    .number()
+    .describe('A numerical sentiment score from -1.0 (very negative) to 1.0 (very positive) reflecting the intensity of the sentiment. 0.0 is neutral.'),
   error: z.string().optional().describe('An error message if the generation failed.'),
 });
 
@@ -46,8 +49,19 @@ const sentimentPrompt = ai.definePrompt({
   - {{{this}}}
   {{/each}}
 
-  Provide a summary of the overall sentiment (positive, negative, neutral, or mixed) and a concise explanation of the potential impact on the currency pair.
+  Provide the following in JSON format:
+  1.  "overallSentiment": A summary of the overall sentiment (e.g., "Positive", "Negative", "Neutral", "Mixed").
+  2.  "summary": A concise explanation of the potential impact on the currency pair (1-2 sentences).
+  3.  "sentimentScore": A numerical sentiment score from -1.0 (very negative) to 1.0 (very positive) reflecting the intensity of the sentiment. 0.0 is neutral.
+
   Be direct and to the point. Limit the summary to two sentences.
+  If headlines are very generic or uninformative, sentiment should be "Neutral" and score 0.0.
+  Example output:
+  {
+    "overallSentiment": "Positive",
+    "summary": "Recent positive economic data and dovish central bank commentary are likely to support the base currency.",
+    "sentimentScore": 0.7
+  }
   `,
 });
 
@@ -59,12 +73,17 @@ const summarizeNewsSentimentFlow = ai.defineFlow(
   },
   async (input): Promise<SummarizeNewsSentimentOutput> => {
     try {
+      // Ensure there are some headlines, even if just a default one.
+      if (!input.newsHeadlines || input.newsHeadlines.length === 0) {
+        input.newsHeadlines = [`General market conditions for ${input.currencyPair}`];
+      }
       const {output} = await sentimentPrompt(input);
-      if (!output || !output.overallSentiment || !output.summary) {
-        console.error('summarizeNewsSentimentPrompt returned invalid or incomplete output.');
+      if (!output || !output.overallSentiment || !output.summary || output.sentimentScore === undefined) {
+        console.error('summarizeNewsSentimentPrompt returned invalid or incomplete output:', output);
         return {
           overallSentiment: 'Neutral',
           summary: 'Sentiment analysis failed due to incomplete data from the model.',
+          sentimentScore: 0.0,
           error: 'AI prompt failed to return valid sentiment structure.',
         };
       }
@@ -79,6 +98,7 @@ const summarizeNewsSentimentFlow = ai.defineFlow(
       return {
         overallSentiment: 'Unknown',
         summary: `Sentiment analysis failed: ${displayError}`,
+        sentimentScore: 0.0,
         error: displayError,
       };
     }
