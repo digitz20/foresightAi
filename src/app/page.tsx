@@ -162,8 +162,7 @@ async function fetchCombinedDataForAsset(
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
-  let fetchedHeadlines: NewsHeadlinesResult = { headlines: [], sourceProvider: 'NewsAPI.org' };
-
+  
   try {
     const marketApiDataPromise = fetchMarketData(asset, timeframeId, {
       polygon: apiKeys.polygon,
@@ -180,10 +179,8 @@ async function fetchCombinedDataForAsset(
         newsApiPromise = fetchNewsHeadlines(asset, apiKeys.newsApi);
     }
 
-
-    const [marketApiData, economicApiData, newsData] = await Promise.all([marketApiDataPromise, economicApiDataPromise, newsApiPromise]);
-    fetchedHeadlines = newsData;
-
+    const [marketApiData, economicApiData, fetchedNewsData] = await Promise.all([marketApiDataPromise, economicApiDataPromise, newsApiPromise]);
+    
     let dataErrors: string[] = [];
 
     if (marketApiData.error) {
@@ -192,8 +189,8 @@ async function fetchCombinedDataForAsset(
     if (economicApiData.error) {
       dataErrors.push(`Economic Data (${economicApiData.sourceProvider || 'Unknown'}): ${economicApiData.error}`);
     }
-    if (fetchedHeadlines.error && (!fetchedHeadlines.headlines || fetchedHeadlines.headlines.length === 0)) {
-        dataErrors.push(`News Headlines (${fetchedHeadlines.sourceProvider || 'NewsAPI.org'}): ${fetchedHeadlines.error}`);
+    if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) {
+        dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
     }
     
     if (dataErrors.length > 0) {
@@ -218,10 +215,18 @@ async function fetchCombinedDataForAsset(
       sourceProvider: marketApiData.sourceProvider 
     };
     
+    const headlinesForSentiment = fetchedNewsData.headlines && fetchedNewsData.headlines.length > 0 
+        ? fetchedNewsData.headlines 
+        : [`No specific news headlines found for ${asset.name}. General market conditions apply.`];
+    
+    const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: asset.name, newsHeadlines: headlinesForSentiment };
+    const newsSentiment = await summarizeNewsSentiment(newsSentimentInput);
+
+
     if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
-            newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed due to market data error: ${marketApiData.error}`, error: marketApiData.error },
+            newsSentiment: newsSentiment, // Use the fetched news sentiment even if market data fails
             marketOverviewData: { ...marketApiData, error: marketApiData.error, sourceProvider: marketApiData.sourceProvider }, 
             technicalIndicatorsData: processedTechIndicators,
             economicIndicatorData: { 
@@ -240,28 +245,49 @@ async function fetchCombinedDataForAsset(
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    const simulatedInterestRate = 0.5 + Math.random() * 2;
-    const interestRateForAI = parseFloat(simulatedInterestRate.toFixed(2));
+    // Derive sentiment score
+    let derivedSentimentScore = 0.0;
+    const sentimentText = newsSentiment?.overallSentiment?.toLowerCase();
+    if (newsSentiment && !newsSentiment.error && sentimentText) {
+      if (sentimentText.includes('positive')) {
+        derivedSentimentScore = 0.7;
+      } else if (sentimentText.includes('negative')) {
+        derivedSentimentScore = -0.7;
+      } else if (sentimentText.includes('mixed')) {
+        derivedSentimentScore = 0.1; 
+      }
+      // Neutral or Unknown will remain 0.0
+    }
 
-    const headlinesForSentiment = fetchedHeadlines.headlines && fetchedHeadlines.headlines.length > 0 
-        ? fetchedHeadlines.headlines 
-        : [`No specific news headlines found for ${asset.name}. General market conditions apply.`];
+    // Estimate interest rate
+    let derivedInterestRate = 0.5; // Default fallback
+    const primaryCurrencyForRate = asset.economicIds.openexchangerates?.toUpperCase() || asset.economicIds.exchangerateapi?.toUpperCase();
 
+    if (primaryCurrencyForRate) {
+        switch (primaryCurrencyForRate) {
+            case 'EUR': derivedInterestRate = 0.5; break;
+            case 'USD': derivedInterestRate = 1.0; break;
+            case 'GBP': derivedInterestRate = 0.75; break;
+            case 'JPY': derivedInterestRate = -0.1; break;
+            case 'AUD': derivedInterestRate = 0.8; break;
+            case 'CAD': derivedInterestRate = 0.9; break;
+            case 'CHF': derivedInterestRate = 0.25; break;
+            case 'NZD': derivedInterestRate = 0.85; break;
+            case 'XAU': case 'XAG': case 'BTC': derivedInterestRate = 0.25; break; // Lower rates supportive for these
+            case 'WTI': derivedInterestRate = 0.5; break; // Example rate for oil context
+            default: derivedInterestRate = 0.5;
+        }
+    }
 
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
       macd: parseFloat(macdValue.toFixed(4)),
-      sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), 
-      interestRate: interestRateForAI, 
-      price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") ? 2 : (asset.type === "crypto" ? 2 : 4))),
+      sentimentScore: parseFloat(derivedSentimentScore.toFixed(2)), 
+      interestRate: parseFloat(derivedInterestRate.toFixed(2)), 
+      price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") || asset.type === "crypto" ? 2 : 4)),
     };
 
-    const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: asset.name, newsHeadlines: headlinesForSentiment };
-
-    const [tradeRecommendation, newsSentiment] = await Promise.all([
-      generateTradeRecommendation(tradeRecommendationInput),
-      summarizeNewsSentiment(newsSentimentInput)
-    ]);
+    const tradeRecommendation = await generateTradeRecommendation(tradeRecommendationInput);
     
     const finalEconomicData: FetchedEconomicIndicatorData = {
         indicatorName: economicApiData.indicatorName,
@@ -272,13 +298,23 @@ async function fetchCombinedDataForAsset(
         error: economicApiData.error 
     };
     
+    // Consolidate errors for the final combinedError string
+    let finalErrors: string[] = [];
+    if (marketApiData.error) finalErrors.push(`Market: ${marketApiData.error}`);
+    if (economicApiData.error) finalErrors.push(`Economic: ${economicApiData.error}`);
+    if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) finalErrors.push(`News: ${fetchedNewsData.error}`);
+    if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
+    if (tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
+    
+    const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
+
     return {
         tradeRecommendation,
         newsSentiment,
         marketOverviewData: {...marketApiData, sourceProvider: marketApiData.sourceProvider},
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
-        combinedError: marketApiData.error || economicApiData.error || fetchedHeadlines.error || tradeRecommendation?.error || newsSentiment?.error || combinedError 
+        combinedError: finalCombinedError || combinedError
     };
 
   } catch (error) {
@@ -444,8 +480,7 @@ export default function HomePage() {
          loadData(selectedAsset, selectedTimeframe, currentApiKeys);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, selectedAsset, selectedTimeframe, loadData]);
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, selectedAsset, selectedTimeframe, loadData, aiData, isLoading, isRefreshing]);
 
 
   const handleAssetChange = (asset: Asset) => {
