@@ -24,14 +24,14 @@ import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData, EconomicData as FetchedEconomicData } from '@/app/actions/fetch-economic-data';
 
 const ASSETS = [
-  { id: "OANDA:EUR_USD", name: "EUR/USD", type: "currency" },
-  { id: "OANDA:GBP_JPY", name: "GBP/JPY", type: "currency" },
-  { id: "OANDA:AUD_USD", name: "AUD/USD", type: "currency" },
-  { id: "OANDA:USD_CAD", name: "USD/CAD", type: "currency" },
-  { id: "OANDA:XAU_USD", name: "Gold (Spot)", type: "commodity" },
-  { id: "OANDA:XAG_USD", name: "Silver (Spot)", type: "commodity" },
-  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" },
-  { id: "BINANCE:BTCUSDT", name: "Bitcoin (BTC/USDT)", type: "crypto" },
+  { id: "C:EURUSD", name: "EUR/USD", type: "currency" },
+  { id: "C:GBPJPY", name: "GBP/JPY", type: "currency" },
+  { id: "C:AUDUSD", name: "AUD/USD", type: "currency" },
+  { id: "C:USDCAD", name: "USD/CAD", type: "currency" },
+  { id: "C:XAUUSD", name: "Gold (XAU/USD)", type: "commodity" },
+  { id: "C:XAGUSD", name: "Silver (XAG/USD)", type: "commodity" },
+  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" }, // USO is an ETF
+  { id: "X:BTCUSD", name: "Bitcoin (BTC/USD)", type: "crypto" },
 ];
 
 const TIMEFRAMES = [
@@ -41,7 +41,7 @@ const TIMEFRAMES = [
   { id: "1D", name: "1D" },
 ];
 
-const DEFAULT_FINNHUB_KEY = 'd167e09r01qvtdbgqdfgd167e09r01qvtdbgqdg0';
+const DEFAULT_POLYGON_KEY = 'zWvUPCQiznWJu0wB3hRic9Qr7YuDC26Q';
 const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
 
 
@@ -71,7 +71,7 @@ async function fetchCombinedDataForAsset(
   assetName: string,
   assetType: string,
   timeframeId: string,
-  finnhubApiKey: string | null,
+  polygonApiKey: string | null,
   openExchangeRatesApiKey: string | null,
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -84,7 +84,7 @@ async function fetchCombinedDataForAsset(
   let combinedError: string | undefined;
 
   try {
-    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, finnhubApiKey);
+    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, polygonApiKey);
     const economicApiDataPromise = fetchEconomicData(assetId, assetName, openExchangeRatesApiKey);
 
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
@@ -150,8 +150,8 @@ async function fetchCombinedDataForAsset(
         `Volatility expected for ${assetType}s amid global economic shifts.`,
         `${assetName} price movements influenced by recent ${timeframeId} trends.`
       ];
-    if (assetId.includes("EUR_USD")) newsHeadlines.push("ECB policy decisions in focus.");
-    if (assetId.includes("BTC")) newsHeadlines.push("Crypto market sentiment shifts rapidly.");
+    if (assetId.includes("EURUSD")) newsHeadlines.push("ECB policy decisions in focus."); // C:EURUSD
+    if (assetId.includes("BTC")) newsHeadlines.push("Crypto market sentiment shifts rapidly."); // X:BTCUSD
 
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
@@ -224,22 +224,22 @@ export default function HomePage() {
   const [lastError, setLastError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const [finnhubApiKey, setFinnhubApiKey] = useState<string | null>(null);
+  const [polygonApiKey, setPolygonApiKey] = useState<string | null>(null);
   const [openExchangeRatesApiKey, setOpenExchangeRatesApiKey] = useState<string | null>(null);
-  const [tempFinnhubKey, setTempFinnhubKey] = useState('');
+  const [tempPolygonKey, setTempPolygonKey] = useState('');
   const [tempOpenExchangeRatesKey, setTempOpenExchangeRatesKey] = useState('');
-  const [showFinnhubKey, setShowFinnhubKey] = useState(false);
+  const [showPolygonKey, setShowPolygonKey] = useState(false);
   const [showOpenExchangeRatesKey, setShowOpenExchangeRatesKey] = useState(false);
 
 
   useEffect(() => {
-    let keyToUseForFinnhub = localStorage.getItem('finnhubApiKey');
-    if (!keyToUseForFinnhub) {
-      keyToUseForFinnhub = DEFAULT_FINNHUB_KEY;
-      localStorage.setItem('finnhubApiKey', keyToUseForFinnhub);
+    let keyToUseForPolygon = localStorage.getItem('polygonApiKey');
+    if (!keyToUseForPolygon) {
+      keyToUseForPolygon = DEFAULT_POLYGON_KEY;
+      localStorage.setItem('polygonApiKey', keyToUseForPolygon);
     }
-    setFinnhubApiKey(keyToUseForFinnhub);
-    setTempFinnhubKey(keyToUseForFinnhub);
+    setPolygonApiKey(keyToUseForPolygon);
+    setTempPolygonKey(keyToUseForPolygon);
 
     let keyToUseForOpenExchange = localStorage.getItem('openExchangeRatesApiKey');
     if (!keyToUseForOpenExchange) {
@@ -253,16 +253,16 @@ export default function HomePage() {
   }, []);
 
 
-  const handleSetFinnhubKey = () => {
-    if (tempFinnhubKey.trim()) {
-      setFinnhubApiKey(tempFinnhubKey.trim());
-      localStorage.setItem('finnhubApiKey', tempFinnhubKey.trim());
-      toast({ title: "Finnhub API Key Set", description: "Market data fetching enabled." });
+  const handleSetPolygonKey = () => {
+    if (tempPolygonKey.trim()) {
+      setPolygonApiKey(tempPolygonKey.trim());
+      localStorage.setItem('polygonApiKey', tempPolygonKey.trim());
+      toast({ title: "Polygon.io API Key Set", description: "Market data fetching enabled." });
       if (openExchangeRatesApiKey) {
-        loadData(selectedAsset, selectedTimeframe, tempFinnhubKey.trim(), openExchangeRatesApiKey);
+        loadData(selectedAsset, selectedTimeframe, tempPolygonKey.trim(), openExchangeRatesApiKey);
       }
     } else {
-      toast({ title: "API Key Empty", description: "Please enter a valid Finnhub API key.", variant: "destructive" });
+      toast({ title: "API Key Empty", description: "Please enter a valid Polygon.io API key.", variant: "destructive" });
     }
   };
 
@@ -271,8 +271,8 @@ export default function HomePage() {
       setOpenExchangeRatesApiKey(tempOpenExchangeRatesKey.trim());
       localStorage.setItem('openExchangeRatesApiKey', tempOpenExchangeRatesKey.trim());
       toast({ title: "Open Exchange Rates API Key Set", description: "Economic data fetching enabled." });
-      if (finnhubApiKey) {
-         loadData(selectedAsset, selectedTimeframe, finnhubApiKey, tempOpenExchangeRatesKey.trim());
+      if (polygonApiKey) {
+         loadData(selectedAsset, selectedTimeframe, polygonApiKey, tempOpenExchangeRatesKey.trim());
       }
     } else {
       toast({ title: "API Key Empty", description: "Please enter a valid Open Exchange Rates API key.", variant: "destructive" });
@@ -283,10 +283,10 @@ export default function HomePage() {
   const loadData = useCallback(async (
       asset: typeof ASSETS[0], 
       timeframe: typeof TIMEFRAMES[0],
-      currentFinnhubKey: string | null,
+      currentPolygonKey: string | null,
       currentOpenExchangeRatesKey: string | null
     ) => {
-    if (!currentFinnhubKey || !currentOpenExchangeRatesKey) {
+    if (!currentPolygonKey || !currentOpenExchangeRatesKey) {
       setLastError("One or more API keys are not set. Please set both API keys to fetch all data.");
       setIsLoading(false); 
       setAiData(null); 
@@ -300,7 +300,7 @@ export default function HomePage() {
         asset.name, 
         asset.type, 
         timeframe.id,
-        currentFinnhubKey,
+        currentPolygonKey,
         currentOpenExchangeRatesKey
     );
     setAiData(data);
@@ -322,20 +322,20 @@ export default function HomePage() {
   }, []); 
 
   useEffect(() => {
-    if (finnhubApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
+    if (polygonApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
       if (!aiData) {
-         loadData(selectedAsset, selectedTimeframe, finnhubApiKey, openExchangeRatesApiKey);
+         loadData(selectedAsset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finnhubApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
+  }, [polygonApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
     if (asset.id !== selectedAsset.id) {
       setSelectedAsset(asset);
-      if (finnhubApiKey && openExchangeRatesApiKey) {
-        loadData(asset, selectedTimeframe, finnhubApiKey, openExchangeRatesApiKey);
+      if (polygonApiKey && openExchangeRatesApiKey) {
+        loadData(asset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey);
       }
     }
   };
@@ -343,14 +343,14 @@ export default function HomePage() {
   const handleTimeframeChange = (timeframe: typeof TIMEFRAMES[0]) => {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
-       if (finnhubApiKey && openExchangeRatesApiKey) {
-        loadData(selectedAsset, timeframe, finnhubApiKey, openExchangeRatesApiKey);
+       if (polygonApiKey && openExchangeRatesApiKey) {
+        loadData(selectedAsset, timeframe, polygonApiKey, openExchangeRatesApiKey);
       }
     }
   };
 
   const handleRefresh = async () => {
-    if (!finnhubApiKey || !openExchangeRatesApiKey) {
+    if (!polygonApiKey || !openExchangeRatesApiKey) {
       toast({ title: "API Keys Required", description: "Please set both API keys before refreshing.", variant: "destructive" });
       return;
     }
@@ -361,7 +361,7 @@ export default function HomePage() {
           selectedAsset.name, 
           selectedAsset.type, 
           selectedTimeframe.id,
-          finnhubApiKey,
+          polygonApiKey,
           openExchangeRatesApiKey
         );
       setAiData(data);
@@ -384,8 +384,8 @@ export default function HomePage() {
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
-  const isDataFetchingDisabled = isLoading || isRefreshing || !finnhubApiKey || !openExchangeRatesApiKey;
-  const isKeySetupPhase = !finnhubApiKey || !openExchangeRatesApiKey;
+  const isDataFetchingDisabled = isLoading || isRefreshing || !polygonApiKey || !openExchangeRatesApiKey;
+  const isKeySetupPhase = !polygonApiKey || !openExchangeRatesApiKey;
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -394,20 +394,20 @@ export default function HomePage() {
         <div className="mb-6 p-4 border border-border rounded-lg bg-card shadow-md space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                    <label htmlFor="finnhubKeyInput" className="block text-sm font-medium text-foreground mb-1">Finnhub API Key:</label>
+                    <label htmlFor="polygonKeyInput" className="block text-sm font-medium text-foreground mb-1">Polygon.io API Key:</label>
                     <div className="flex gap-2 items-center">
                         <Input 
-                            id="finnhubKeyInput"
-                            type={showFinnhubKey ? "text" : "password"}
-                            value={tempFinnhubKey} 
-                            onChange={(e) => setTempFinnhubKey(e.target.value)}
-                            placeholder="Enter Finnhub API Key"
+                            id="polygonKeyInput"
+                            type={showPolygonKey ? "text" : "password"}
+                            value={tempPolygonKey} 
+                            onChange={(e) => setTempPolygonKey(e.target.value)}
+                            placeholder="Enter Polygon.io API Key"
                             className="flex-grow"
                         />
-                        <Button variant="ghost" size="icon" onClick={() => setShowFinnhubKey(!showFinnhubKey)} aria-label={showFinnhubKey ? "Hide API key" : "Show API key"}>
-                            {showFinnhubKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        <Button variant="ghost" size="icon" onClick={() => setShowPolygonKey(!showPolygonKey)} aria-label={showPolygonKey ? "Hide API key" : "Show API key"}>
+                            {showPolygonKey ? <EyeOff size={16} /> : <Eye size={16} />}
                         </Button>
-                        <Button onClick={handleSetFinnhubKey} size="sm"><KeyRound size={16} /> Set</Button>
+                        <Button onClick={handleSetPolygonKey} size="sm"><KeyRound size={16} /> Set</Button>
                     </div>
                 </div>
                 <div>
@@ -550,14 +550,12 @@ export default function HomePage() {
         ) : null}
       </main>
       <footer className="text-center p-4 text-sm text-muted-foreground border-t border-border/50">
-        Market data from <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Finnhub.io</a>.
+        Market data from <a href="https://polygon.io" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Polygon.io</a>.
         Exchange rate data from <a href="https://openexchangerates.org" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">OpenExchangeRates.org</a>.
         © {new Date().getFullYear()} ForeSight AI. All rights reserved.
       </footer>
     </div>
   );
 }
-
     
-
     
