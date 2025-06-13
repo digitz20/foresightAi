@@ -14,7 +14,7 @@ import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard'
 import EconomicIndicatorCard, { type EconomicIndicatorData as FetchedEconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from "@/hooks/use-toast";
 
@@ -24,12 +24,13 @@ import { summarizeNewsSentiment, SummarizeNewsSentimentInput, SummarizeNewsSenti
 import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData } from '@/app/actions/fetch-economic-data';
 import { fetchNewsHeadlines, NewsHeadlinesResult } from '@/app/actions/fetch-news-headlines';
+import { fetchInterestRate, InterestRateData } from '@/app/actions/fetch-interest-rate';
 
 
 interface Asset {
   name: string; 
   type: 'currency' | 'commodity' | 'crypto';
-  searchKeywords: string[]; // Keywords for news search
+  searchKeywords: string[]; 
   marketIds: { 
     polygon?: string;     
     finnhub?: string;     
@@ -38,6 +39,7 @@ interface Asset {
   economicIds: { 
     openexchangerates?: string; 
     exchangerateapi?: string;   
+    primaryCurrencyForInterestRate?: string; // e.g., USD, EUR, JPY for FRED
   };
 }
 
@@ -46,82 +48,82 @@ const ASSETS: Asset[] = [
   { 
     name: "EUR/USD", type: "currency", searchKeywords: ["EUR", "USD", "Euro", "Dollar", "ECB", "Federal Reserve"],
     marketIds: { polygon: "C:EURUSD", finnhub: "OANDA:EUR_USD", twelvedata: "EUR/USD" },
-    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" }
   },
   { 
     name: "GBP/USD", type: "currency", searchKeywords: ["GBP", "USD", "British Pound", "US Dollar", "Bank of England", "BoE", "Federal Reserve", "Fed"],
     marketIds: { polygon: "C:GBPUSD", finnhub: "OANDA:GBP_USD", twelvedata: "GBP/USD" },
-    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP" }
+    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP", primaryCurrencyForInterestRate: "GBP" }
   },
   { 
     name: "USD/JPY", type: "currency", searchKeywords: ["USD", "JPY", "Japanese Yen", "Bank of Japan", "BoJ"],
     marketIds: { polygon: "C:USDJPY", finnhub: "OANDA:USD_JPY", twelvedata: "USD/JPY" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "JPY" } // Primary rate influence from JPY perspective
   },
   { 
     name: "AUD/USD", type: "currency", searchKeywords: ["AUD", "USD", "Australian Dollar", "Reserve Bank of Australia", "RBA"],
     marketIds: { polygon: "C:AUDUSD", finnhub: "OANDA:AUD_USD", twelvedata: "AUD/USD" },
-    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD" }
+    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD", primaryCurrencyForInterestRate: "AUD" }
   },
   { 
     name: "USD/CAD", type: "currency", searchKeywords: ["USD", "CAD", "Canadian Dollar", "Bank of Canada", "BoC"],
     marketIds: { polygon: "C:USDCAD", finnhub: "OANDA:USD_CAD", twelvedata: "USD/CAD" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" } 
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "CAD" } 
   },
   {
     name: "USD/CHF", type: "currency", searchKeywords: ["USD", "CHF", "Swiss Franc", "SNB", "Swiss National Bank"],
     marketIds: { polygon: "C:USDCHF", finnhub: "OANDA:USD_CHF", twelvedata: "USD/CHF" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "CHF" }
   },
   {
     name: "NZD/USD", type: "currency", searchKeywords: ["NZD", "USD", "New Zealand Dollar", "RBNZ", "Reserve Bank of New Zealand"],
     marketIds: { polygon: "C:NZDUSD", finnhub: "OANDA:NZD_USD", twelvedata: "NZD/USD" },
-    economicIds: { openexchangerates: "NZD", exchangerateapi: "NZD" }
+    economicIds: { openexchangerates: "NZD", exchangerateapi: "NZD", primaryCurrencyForInterestRate: "NZD" }
   },
   {
     name: "EUR/GBP", type: "currency", searchKeywords: ["EUR", "GBP", "Euro", "British Pound", "ECB", "BoE"],
     marketIds: { polygon: "C:EURGBP", finnhub: "OANDA:EUR_GBP", twelvedata: "EUR/GBP" },
-    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } // Could also consider GBP
   },
   { 
     name: "EUR/JPY", type: "currency", searchKeywords: ["EUR", "JPY", "Euro", "Japanese Yen", "ECB", "Bank of Japan", "BoJ"],
     marketIds: { polygon: "C:EURJPY", finnhub: "OANDA:EUR_JPY", twelvedata: "EUR/JPY" },
-    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } // Could also consider JPY
   },
   { 
     name: "GBP/JPY", type: "currency", searchKeywords: ["GBP", "JPY", "British Pound", "Japanese Yen", "Bank of England", "Bank of Japan"],
     marketIds: { polygon: "C:GBPJPY", finnhub: "OANDA:GBP_JPY", twelvedata: "GBP/JPY" },
-    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP" }
+    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP", primaryCurrencyForInterestRate: "GBP" } // Could also consider JPY
   },
   { 
     name: "AUD/CAD", type: "currency", searchKeywords: ["AUD", "CAD", "Australian Dollar", "Canadian Dollar", "Reserve Bank of Australia", "RBA", "Bank of Canada", "BoC"],
     marketIds: { polygon: "C:AUDCAD", finnhub: "OANDA:AUD_CAD", twelvedata: "AUD/CAD" },
-    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD" }
+    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD", primaryCurrencyForInterestRate: "AUD" } // Could also consider CAD
   },
   { 
     name: "USD/SGD", type: "currency", searchKeywords: ["USD", "SGD", "Singapore Dollar", "Monetary Authority of Singapore", "MAS"],
     marketIds: { polygon: "C:USDSGD", finnhub: "OANDA:USD_SGD", twelvedata: "USD/SGD" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "SGD" } // SGD may need fallback
   },
   { 
     name: "Gold (XAU/USD)", type: "commodity", searchKeywords: ["Gold", "XAUUSD", "precious metals", "commodities"],
     marketIds: { polygon: "X:XAUUSD", finnhub: "FXCM:XAU/USD", twelvedata: "XAU/USD" }, 
-    economicIds: { openexchangerates: "XAU", exchangerateapi: "XAU" } 
+    economicIds: { openexchangerates: "XAU", exchangerateapi: "XAU", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
   },
   { 
     name: "Silver (XAG/USD)", type: "commodity", searchKeywords: ["Silver", "XAGUSD", "precious metals", "commodities"],
     marketIds: { polygon: "X:XAGUSD", finnhub: "FXCM:XAG/USD", twelvedata: "XAG/USD" },
-    economicIds: { openexchangerates: "XAG", exchangerateapi: "XAG" }
+    economicIds: { openexchangerates: "XAG", exchangerateapi: "XAG", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
   },
   { 
     name: "Crude Oil (WTI)", type: "commodity", searchKeywords: ["Crude Oil", "WTI", "energy", "OPEC"],
     marketIds: { polygon: "CL", finnhub: "USO", twelvedata: "CL" }, 
-    economicIds: { openexchangerates: "WTI", exchangerateapi: "WTI" } 
+    economicIds: { openexchangerates: "WTI", exchangerateapi: "WTI", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
   },
   { 
     name: "Bitcoin (BTC/USD)", type: "crypto", searchKeywords: ["Bitcoin", "BTC", "crypto", "cryptocurrency"],
     marketIds: { polygon: "X:BTCUSD", finnhub: "BINANCE:BTCUSDT", twelvedata: "BTC/USD" },
-    economicIds: { openexchangerates: "BTC", exchangerateapi: "BTC" }
+    economicIds: { openexchangerates: "BTC", exchangerateapi: "BTC", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
   },
 ];
 
@@ -140,6 +142,7 @@ const DEFAULT_TWELVEDATA_KEY = '3a10512308b24fbb880b7a137f824a4d';
 const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
 const DEFAULT_EXCHANGERATE_API_KEY = 'd30c5b3ab75049fb4f361d6d';
 const DEFAULT_NEWSAPI_KEY = 'd2412348368f4a3ea431d8704ca200fc';
+const DEFAULT_FRED_KEY = '31d90da534e6f5269237979b7ff11e13';
 
 
 const getRsiStatus = (rsiValue?: number): string => {
@@ -173,6 +176,7 @@ async function fetchCombinedDataForAsset(
     openExchangeRates?: string | null;
     exchangeRateApi?: string | null;
     newsApi?: string | null; 
+    fred?: string | null;
   }
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -180,6 +184,7 @@ async function fetchCombinedDataForAsset(
   marketOverviewData?: MarketData; 
   technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; 
   economicIndicatorData?: FetchedEconomicIndicatorData; 
+  fetchedInterestRateData?: InterestRateData; // To store FRED result
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
@@ -200,7 +205,20 @@ async function fetchCombinedDataForAsset(
         newsApiPromise = fetchNewsHeadlines(asset, apiKeys.newsApi);
     }
 
-    const [marketApiData, economicApiData, fetchedNewsData] = await Promise.all([marketApiDataPromise, economicApiDataPromise, newsApiPromise]);
+    let interestRatePromise: Promise<InterestRateData> = Promise.resolve({ error: "FRED API key not provided or asset not applicable.", sourceProvider: 'FRED' });
+    if (apiKeys.fred && asset.economicIds.primaryCurrencyForInterestRate) {
+        interestRatePromise = fetchInterestRate(asset.economicIds.primaryCurrencyForInterestRate, apiKeys.fred);
+    } else if (apiKeys.fred && !asset.economicIds.primaryCurrencyForInterestRate) {
+        interestRatePromise = Promise.resolve({ error: `Asset ${asset.name} not configured for FRED interest rate fetching.`, sourceProvider: 'FRED' });
+    }
+
+
+    const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData] = await Promise.all([
+        marketApiDataPromise, 
+        economicApiDataPromise, 
+        newsApiPromise,
+        interestRatePromise
+    ]);
     
     let dataErrors: string[] = [];
 
@@ -212,6 +230,9 @@ async function fetchCombinedDataForAsset(
     }
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) {
         dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
+    }
+    if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) {
+        dataErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
     }
     
     if (dataErrors.length > 0) {
@@ -247,7 +268,7 @@ async function fetchCombinedDataForAsset(
     if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
-            newsSentiment: newsSentiment, // Use the fetched news sentiment even if market data fails
+            newsSentiment: newsSentiment, 
             marketOverviewData: { ...marketApiData, error: marketApiData.error, sourceProvider: marketApiData.sourceProvider }, 
             technicalIndicatorsData: processedTechIndicators,
             economicIndicatorData: { 
@@ -258,6 +279,7 @@ async function fetchCombinedDataForAsset(
                 lastUpdated: economicApiData.lastUpdated,
                 error: economicApiData.error || combinedError 
             },
+            fetchedInterestRateData,
             combinedError,
         };
     }
@@ -266,14 +288,14 @@ async function fetchCombinedDataForAsset(
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    // Use sentiment score directly from newsSentiment AI output
     const derivedSentimentScore = newsSentiment?.sentimentScore ?? 0.0;
 
-    // Estimate interest rate (remains an estimation due to API limitations for live benchmark rates)
-    let derivedInterestRate = 0.5; // Default fallback
-    const primaryCurrencyForRate = asset.economicIds.openexchangerates?.toUpperCase() || asset.economicIds.exchangerateapi?.toUpperCase();
-
-    if (primaryCurrencyForRate) {
+    let derivedInterestRate: number;
+    if (fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
+        derivedInterestRate = fetchedInterestRateData.rate;
+    } else {
+        // Fallback to estimation if FRED fails or not applicable
+        const primaryCurrencyForRate = asset.economicIds.primaryCurrencyForInterestRate?.toUpperCase();
         switch (primaryCurrencyForRate) {
             case 'EUR': derivedInterestRate = 0.5; break;
             case 'USD': derivedInterestRate = 1.0; break;
@@ -283,12 +305,19 @@ async function fetchCombinedDataForAsset(
             case 'CAD': derivedInterestRate = 0.9; break;
             case 'CHF': derivedInterestRate = 0.25; break;
             case 'NZD': derivedInterestRate = 0.85; break;
-            case 'SGD': derivedInterestRate = 0.6; break;
-            case 'XAU': case 'XAG': case 'BTC': derivedInterestRate = 0.25; break; 
-            case 'WTI': derivedInterestRate = 0.5; break; 
-            default: derivedInterestRate = 0.5;
+            case 'SGD': derivedInterestRate = 0.6; break; // Needs good FRED series or remains estimation
+            default: derivedInterestRate = 0.25; // Default for unmapped currencies, commodities, crypto
+        }
+        if (asset.type === 'commodity' || asset.type === 'crypto') {
+           derivedInterestRate = 0.25; // Explicit default for these types if not USD based
+           if(asset.economicIds.primaryCurrencyForInterestRate === 'USD' && fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
+              derivedInterestRate = fetchedInterestRateData.rate; // Use US rate if specified and fetched
+           } else if (asset.economicIds.primaryCurrencyForInterestRate === 'USD') {
+              derivedInterestRate = 1.0; // Fallback US rate estimation
+           }
         }
     }
+
 
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
@@ -315,7 +344,8 @@ async function fetchCombinedDataForAsset(
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) finalErrors.push(`News: ${fetchedNewsData.error}`);
     if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
     if (tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
-    
+    if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) finalErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
+
     const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
 
     return {
@@ -324,6 +354,7 @@ async function fetchCombinedDataForAsset(
         marketOverviewData: {...marketApiData, sourceProvider: marketApiData.sourceProvider},
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
+        fetchedInterestRateData,
         combinedError: finalCombinedError || combinedError
     };
 
@@ -344,6 +375,7 @@ async function fetchCombinedDataForAsset(
         marketOverviewData: { assetName: asset.name, timeframe: timeframeId, error: finalCombinedError, sourceProvider: 'Unknown' },
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },
+        fetchedInterestRateData: { error: finalCombinedError, sourceProvider: 'FRED'},
         combinedError: finalCombinedError
     };
   }
@@ -359,6 +391,7 @@ export default function HomePage() {
     marketOverviewData?: MarketData;
     technicalIndicatorsData?: ProcessedTechnicalIndicatorsData;
     economicIndicatorData?: FetchedEconomicIndicatorData;
+    fetchedInterestRateData?: InterestRateData;
     combinedError?: string;
   } | null>(null);
 
@@ -393,6 +426,10 @@ export default function HomePage() {
   const [tempNewsApiKey, setTempNewsApiKey] = useState('');
   const [showNewsApiKey, setShowNewsApiKey] = useState(false);
 
+  const [fredApiKey, setFredApiKey] = useState<string | null>(null);
+  const [tempFredApiKey, setTempFredApiKey] = useState('');
+  const [showFredApiKey, setShowFredApiKey] = useState(false);
+
 
   useEffect(() => {
     const initKey = (storageKey: string, defaultKey: string, setKeyFn: (key: string | null) => void, setTempKeyFn: (key: string) => void) => {
@@ -410,6 +447,7 @@ export default function HomePage() {
     initKey('openExchangeRatesApiKey', DEFAULT_OPEN_EXCHANGE_RATES_KEY, setOpenExchangeRatesApiKey, setTempOpenExchangeRatesKey);
     initKey('exchangeRateApiKey', DEFAULT_EXCHANGERATE_API_KEY, setExchangeRateApiKey, setTempExchangeRateApiKey);
     initKey('newsApiKey', DEFAULT_NEWSAPI_KEY, setNewsApiKey, setTempNewsApiKey);
+    initKey('fredApiKey', DEFAULT_FRED_KEY, setFredApiKey, setTempFredApiKey);
     
     setIsLoading(false); 
   }, []);
@@ -428,6 +466,7 @@ export default function HomePage() {
           openExchangeRates: storageKey === 'openExchangeRatesApiKey' ? trimmedKey : openExchangeRatesApiKey,
           exchangeRateApi: storageKey === 'exchangeRateApiKey' ? trimmedKey : exchangeRateApiKey,
           newsApi: storageKey === 'newsApiKey' ? trimmedKey : newsApiKey,
+          fred: storageKey === 'fredApiKey' ? trimmedKey : fredApiKey,
       };
       if (currentKeys.polygon || currentKeys.finnhub || currentKeys.twelvedata) { 
           loadData(selectedAsset, selectedTimeframe, currentKeys);
@@ -450,6 +489,7 @@ export default function HomePage() {
         openExchangeRates?: string | null;
         exchangeRateApi?: string | null;
         newsApi?: string | null;
+        fred?: string | null;
       }
     ) => {
     if (!currentApiKeys.polygon && !currentApiKeys.finnhub && !currentApiKeys.twelvedata) {
@@ -484,19 +524,20 @@ export default function HomePage() {
         openExchangeRates: openExchangeRatesApiKey, 
         exchangeRateApi: exchangeRateApiKey,
         newsApi: newsApiKey, 
+        fred: fredApiKey,
     };
     if ((currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) && !isLoading && !isRefreshing) {
       if (!aiData) { 
          loadData(selectedAsset, selectedTimeframe, currentApiKeys);
       }
     }
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, selectedAsset, selectedTimeframe, loadData, aiData, isLoading, isRefreshing]);
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, selectedAsset, selectedTimeframe, loadData, aiData, isLoading, isRefreshing]);
 
 
   const handleAssetChange = (asset: Asset) => {
     if (asset.name !== selectedAsset.name) { 
       setSelectedAsset(asset);
-      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey };
+      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
       if (currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) {
         loadData(asset, selectedTimeframe, currentApiKeys);
       }
@@ -506,7 +547,7 @@ export default function HomePage() {
   const handleTimeframeChange = (timeframe: typeof TIMEFRAMES[0]) => {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
-      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey };
+      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
       if (currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) {
         loadData(selectedAsset, timeframe, currentApiKeys);
       }
@@ -514,7 +555,7 @@ export default function HomePage() {
   };
 
   const handleRefresh = useCallback(async () => {
-    const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey };
+    const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
     if (!currentApiKeys.polygon && !currentApiKeys.finnhub && !currentApiKeys.twelvedata) {
       toast({ title: "Market Data API Key Required", description: "Please set at least one market data API key (Polygon, Finnhub, or TwelveData).", variant: "destructive" });
       return;
@@ -529,7 +570,7 @@ export default function HomePage() {
          setLastError(null);
       }
       setIsRefreshing(false);
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, selectedAsset, selectedTimeframe, toast]);
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, selectedAsset, selectedTimeframe, toast]);
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
@@ -545,7 +586,7 @@ export default function HomePage() {
 
     const getIntervalMs = (timeframeId: string): number => {
       switch (timeframeId) {
-        case '5min':  return 30 * 1000;      // 30 seconds for 5min timeframe
+        case '5min':  return 30 * 1000;      
         case '15min': return 1 * 60 * 1000;  
         case '1H':    return 5 * 60 * 1000;  
         case '4H':    return 15 * 60 * 1000; 
@@ -619,7 +660,7 @@ export default function HomePage() {
                 API keys are pre-filled and stored in your browser's local storage. Change them if needed.
                 Market data tries Polygon.io &rarr; Finnhub.io &rarr; TwelveData.
                 Economic data tries OpenExchangeRates.org &rarr; ExchangeRate-API.com.
-                News headlines are fetched from NewsAPI.org.
+                News headlines from NewsAPI.org. Interest rates from FRED.
             </p>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-6">
                 <ApiKeyInputGroup
@@ -688,6 +729,17 @@ export default function HomePage() {
                     placeholder="Enter NewsAPI.org API Key"
                     providerName="NewsAPI.org"
                 />
+                <ApiKeyInputGroup
+                    label="FRED API Key (Interest Rates):"
+                    id="fredApiKeyInput"
+                    value={tempFredApiKey}
+                    onChange={(e) => setTempFredApiKey(e.target.value)}
+                    showKey={showFredApiKey}
+                    onToggleShowKey={() => setShowFredApiKey(!showFredApiKey)}
+                    onSetKey={() => handleSetKey(tempFredApiKey, setFredApiKey, 'fredApiKey', 'FRED')}
+                    placeholder="Enter FRED API Key"
+                    providerName="FRED"
+                />
             </div>
              <div className="text-xs text-muted-foreground p-2 bg-muted/30 rounded-md mt-2">
                 <AlertTriangle size={14} className="inline mr-1 text-destructive" />
@@ -753,6 +805,23 @@ export default function HomePage() {
             </Button>
           </div>
         </div>
+        
+        {/* Display Fetched Interest Rate - Optional new small card or integrated into existing */}
+        {aiData?.fetchedInterestRateData && aiData.fetchedInterestRateData.rate !== undefined && (
+          <div className="mb-4 p-3 border border-border rounded-lg bg-card/50 shadow-sm text-sm">
+            <div className="flex items-center gap-2 text-primary">
+              <Landmark size={18} />
+              <span className="font-semibold">
+                Live Interest Rate ({aiData.fetchedInterestRateData.seriesId || selectedAsset.economicIds.primaryCurrencyForInterestRate || 'N/A'}):
+              </span>
+              <span className="text-foreground font-bold">{aiData.fetchedInterestRateData.rate?.toFixed(2)}%</span>
+            </div>
+            <p className="text-xs text-muted-foreground ml-7">
+              Source: FRED | Last Updated: {aiData.fetchedInterestRateData.lastUpdated || 'N/A'}
+            </p>
+          </div>
+        )}
+
 
         {lastError && (
           <div className="mb-4 p-4 border border-destructive/50 bg-destructive/10 text-destructive rounded-md flex items-start gap-3">
@@ -829,7 +898,7 @@ export default function HomePage() {
       <footer className="text-center p-4 text-sm text-muted-foreground border-t border-border/50">
         Market data via Polygon.io, Finnhub.io, or TwelveData.
         Economic data via OpenExchangeRates.org or ExchangeRate-API.com.
-        News headlines via NewsAPI.org.
+        News headlines via NewsAPI.org. Interest rate data via FRED®.
         © {new Date().getFullYear()} ForeSight AI. All rights reserved.
       </footer>
     </div>
