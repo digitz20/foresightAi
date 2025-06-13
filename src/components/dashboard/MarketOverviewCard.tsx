@@ -1,7 +1,7 @@
 
 'use client';
 
-import { DollarSign, AlertTriangle, AreaChart } from 'lucide-react';
+import { DollarSign, AlertTriangle, AreaChart, Zap, PowerOff, Store, ClockIcon } from 'lucide-react';
 import DashboardCard from './DashboardCard';
 import { useEffect, useState } from 'react';
 import type { MarketData, HistoricalDataPoint } from '@/app/actions/fetch-market-data';
@@ -14,7 +14,10 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts';
-import { useTheme } from 'next-themes'; // To get theme for chart colors
+import { useTheme } from 'next-themes'; 
+import { format, fromUnixTime, differenceInMinutes } from 'date-fns';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 
 const defaultData: MarketData = {
   assetName: 'EUR/USD',
@@ -22,19 +25,19 @@ const defaultData: MarketData = {
   timeframe: '15min',
   sourceProvider: 'Unknown',
   historical: [],
+  marketStatus: 'unknown',
 };
 
 type MarketOverviewCardProps = {
   initialData?: MarketData;
 };
 
-// Custom Tooltip for Recharts
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-background/80 backdrop-blur-sm p-2 border border-border shadow-lg rounded-md">
         <p className="label text-sm text-foreground">{`${label}`}</p>
-        <p className="intro text-sm text-primary">{`Price: ${payload[0].value.toFixed(4)}`}</p> {/* Adjust toFixed as needed */}
+        <p className="intro text-sm text-primary">{`Price: ${payload[0].value.toFixed(4)}`}</p>
       </div>
     );
   }
@@ -45,10 +48,10 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export default function MarketOverviewCard({ initialData }: MarketOverviewCardProps) {
   const [currentMarketData, setCurrentMarketData] = useState<MarketData>(initialData || defaultData);
   const [clientMounted, setClientMounted] = useState(false);
-  const { resolvedTheme } = useTheme(); // Use resolvedTheme for reliable dark/light mode
+  const { resolvedTheme } = useTheme(); 
 
   useEffect(() => {
-    setClientMounted(true); // Ensure client-side rendering for theme
+    setClientMounted(true); 
     if (initialData) {
       setCurrentMarketData(initialData);
     } else {
@@ -58,6 +61,8 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
         timeframe: prev?.timeframe || defaultData.timeframe,
         sourceProvider: prev?.sourceProvider || 'Unknown',
         historical: prev?.historical || [],
+        marketStatus: prev?.marketStatus || 'unknown',
+        lastTradeTimestamp: prev?.lastTradeTimestamp,
       }));
     }
   }, [initialData]);
@@ -65,7 +70,7 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
   const formatPrice = (value: number | undefined, pair: string | undefined) => {
     if (value === undefined || value === null || isNaN(value) || !pair) return 'N/A';
     const isJpyPair = pair.includes("JPY");
-    const isCrypto = pair.includes("BTC") || pair.includes("ETH");
+    const isCrypto = pair.includes("BTC") || pair.includes("ETH"); // Simple check
     const isXauXagCl = pair.includes("XAU") || pair.includes("XAG") || pair.toLowerCase().includes("oil");
 
     if (isJpyPair || isXauXagCl || isCrypto) {
@@ -78,13 +83,62 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     ? `Data from ${currentMarketData.sourceProvider}`
     : 'Data source unknown';
 
-  const chartStrokeColor = resolvedTheme === 'dark' ? 'hsl(var(--primary))' : 'hsl(var(--primary))'; // Example: use primary color
+  const chartStrokeColor = resolvedTheme === 'dark' ? 'hsl(var(--primary))' : 'hsl(var(--primary))';
   const gridStrokeColor = resolvedTheme === 'dark' ? 'hsl(var(--border) / 0.5)' : 'hsl(var(--border) / 0.7)';
   const tickFillColor = resolvedTheme === 'dark' ? 'hsl(var(--muted-foreground))' : 'hsl(var(--muted-foreground))';
 
+  const renderMarketStatus = () => {
+    if (!currentMarketData.marketStatus || currentMarketData.marketStatus === 'unknown') {
+      if (currentMarketData.lastTradeTimestamp) {
+        const lastTradeDate = fromUnixTime(currentMarketData.lastTradeTimestamp / 1000);
+        const minutesAgo = differenceInMinutes(new Date(), lastTradeDate);
+        let stalenessMessage = `Last data: ${format(lastTradeDate, 'MMM dd, HH:mm')}`;
+        if (minutesAgo > 60 * 24) { // More than a day old
+            stalenessMessage += ` (over a day ago)`;
+        } else if (minutesAgo > 30 && currentMarketData.sourceProvider !== 'Polygon.io') { // Polygon provides explicit status
+            stalenessMessage += ` (may be stale)`;
+        }
+        return (
+          <Badge variant="outline" className="text-xs mt-1">
+            <ClockIcon className="h-3 w-3 mr-1" />
+            {stalenessMessage}
+          </Badge>
+        );
+      }
+      return null;
+    }
 
+    let StatusIcon = Store;
+    let statusText = currentMarketData.marketStatus.charAt(0).toUpperCase() + currentMarketData.marketStatus.slice(1);
+    let badgeColor = "bg-muted/50 text-muted-foreground border-muted";
+
+    switch (currentMarketData.marketStatus) {
+      case 'open':
+        StatusIcon = Zap;
+        badgeColor = "bg-green-500/20 text-green-400 border-green-500/50";
+        break;
+      case 'closed':
+        StatusIcon = PowerOff;
+        badgeColor = "bg-red-500/20 text-red-400 border-red-500/50";
+        break;
+      case 'pre-market':
+      case 'post-market':
+      case 'extended-hours':
+        StatusIcon = ClockIcon;
+        badgeColor = "bg-yellow-500/20 text-yellow-400 border-yellow-500/50";
+        break;
+    }
+
+    return (
+      <Badge variant="outline" className={cn("text-xs mt-1", badgeColor)}>
+        <StatusIcon className="h-3 w-3 mr-1.5" />
+        Market: {statusText}
+      </Badge>
+    );
+  };
+  
   const renderChart = () => {
-    if (!clientMounted) { // Prevents SSR/hydration mismatch for theme-dependent chart
+    if (!clientMounted) { 
         return <div className="aspect-[16/9] bg-muted/30 rounded-md flex items-center justify-center"><p className="text-xs text-muted-foreground">Loading chart...</p></div>;
     }
     if (!currentMarketData.historical || currentMarketData.historical.length === 0) {
@@ -100,7 +154,7 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     }
     return (
       <ResponsiveContainer width="100%" height={200} className="aspect-[16/9]">
-        <LineChart data={currentMarketData.historical} margin={{ top: 5, right: 20, left: -25, bottom: 5 }}> {/* Adjusted left margin */}
+        <LineChart data={currentMarketData.historical} margin={{ top: 5, right: 20, left: -25, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridStrokeColor} />
           <XAxis 
             dataKey="date" 
@@ -128,7 +182,10 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     <DashboardCard title="Market Overview" icon={DollarSign}>
       <div className="space-y-4">
         <div>
-          <h3 className="text-lg font-medium text-foreground">{currentMarketData.assetName || 'N/A'}</h3>
+          <div className="flex justify-between items-start">
+            <h3 className="text-lg font-medium text-foreground">{currentMarketData.assetName || 'N/A'}</h3>
+            {renderMarketStatus()}
+          </div>
           {currentMarketData.error && currentMarketData.price === undefined ? (
             <div className="flex items-center gap-2 text-destructive mt-1">
               <AlertTriangle size={20} />
@@ -144,10 +201,10 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
            {currentMarketData.price !== undefined && <p className="text-xs text-muted-foreground mt-1">{dataSourceText}</p>}
         </div>
         <div className="mt-4">
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend (Last ~60 Days)</h4>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend (Last ~60 points)</h4>
           {renderChart()}
         </div>
-         {currentMarketData.error && currentMarketData.price !== undefined && (
+         {currentMarketData.error && currentMarketData.price !== undefined && ( // Show error if data is partial
             <p className="text-xs text-destructive mt-1"><AlertTriangle className="inline h-3 w-3 mr-1" />Partial error: {currentMarketData.error}</p>
         )}
       </div>

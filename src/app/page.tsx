@@ -58,7 +58,7 @@ const ASSETS: Asset[] = [
   { 
     name: "USD/JPY", type: "currency", searchKeywords: ["USD", "JPY", "Japanese Yen", "Bank of Japan", "BoJ"],
     marketIds: { polygon: "C:USDJPY", finnhub: "OANDA:USD_JPY", twelvedata: "USD/JPY" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "JPY" } // Primary rate influence from JPY perspective
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "JPY" } 
   },
   { 
     name: "AUD/USD", type: "currency", searchKeywords: ["AUD", "USD", "Australian Dollar", "Reserve Bank of Australia", "RBA"],
@@ -83,47 +83,47 @@ const ASSETS: Asset[] = [
   {
     name: "EUR/GBP", type: "currency", searchKeywords: ["EUR", "GBP", "Euro", "British Pound", "ECB", "BoE"],
     marketIds: { polygon: "C:EURGBP", finnhub: "OANDA:EUR_GBP", twelvedata: "EUR/GBP" },
-    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } // Could also consider GBP
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } 
   },
   { 
     name: "EUR/JPY", type: "currency", searchKeywords: ["EUR", "JPY", "Euro", "Japanese Yen", "ECB", "Bank of Japan", "BoJ"],
     marketIds: { polygon: "C:EURJPY", finnhub: "OANDA:EUR_JPY", twelvedata: "EUR/JPY" },
-    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } // Could also consider JPY
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR", primaryCurrencyForInterestRate: "EUR" } 
   },
   { 
     name: "GBP/JPY", type: "currency", searchKeywords: ["GBP", "JPY", "British Pound", "Japanese Yen", "Bank of England", "Bank of Japan"],
     marketIds: { polygon: "C:GBPJPY", finnhub: "OANDA:GBP_JPY", twelvedata: "GBP/JPY" },
-    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP", primaryCurrencyForInterestRate: "GBP" } // Could also consider JPY
+    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP", primaryCurrencyForInterestRate: "GBP" } 
   },
   { 
     name: "AUD/CAD", type: "currency", searchKeywords: ["AUD", "CAD", "Australian Dollar", "Canadian Dollar", "Reserve Bank of Australia", "RBA", "Bank of Canada", "BoC"],
     marketIds: { polygon: "C:AUDCAD", finnhub: "OANDA:AUD_CAD", twelvedata: "AUD/CAD" },
-    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD", primaryCurrencyForInterestRate: "AUD" } // Could also consider CAD
+    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD", primaryCurrencyForInterestRate: "AUD" } 
   },
   { 
     name: "USD/SGD", type: "currency", searchKeywords: ["USD", "SGD", "Singapore Dollar", "Monetary Authority of Singapore", "MAS"],
     marketIds: { polygon: "C:USDSGD", finnhub: "OANDA:USD_SGD", twelvedata: "USD/SGD" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "SGD" } // SGD may need fallback
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD", primaryCurrencyForInterestRate: "SGD" } 
   },
   { 
     name: "Gold (XAU/USD)", type: "commodity", searchKeywords: ["Gold", "XAUUSD", "precious metals", "commodities"],
     marketIds: { polygon: "X:XAUUSD", finnhub: "FXCM:XAU/USD", twelvedata: "XAU/USD" }, 
-    economicIds: { openexchangerates: "XAU", exchangerateapi: "XAU", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
+    economicIds: { openexchangerates: "XAU", exchangerateapi: "XAU", primaryCurrencyForInterestRate: "USD" } 
   },
   { 
     name: "Silver (XAG/USD)", type: "commodity", searchKeywords: ["Silver", "XAGUSD", "precious metals", "commodities"],
     marketIds: { polygon: "X:XAGUSD", finnhub: "FXCM:XAG/USD", twelvedata: "XAG/USD" },
-    economicIds: { openexchangerates: "XAG", exchangerateapi: "XAG", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
+    economicIds: { openexchangerates: "XAG", exchangerateapi: "XAG", primaryCurrencyForInterestRate: "USD" } 
   },
   { 
     name: "Crude Oil (WTI)", type: "commodity", searchKeywords: ["Crude Oil", "WTI", "energy", "OPEC"],
     marketIds: { polygon: "CL", finnhub: "USO", twelvedata: "CL" }, 
-    economicIds: { openexchangerates: "WTI", exchangerateapi: "WTI", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
+    economicIds: { openexchangerates: "WTI", exchangerateapi: "WTI", primaryCurrencyForInterestRate: "USD" } 
   },
   { 
     name: "Bitcoin (BTC/USD)", type: "crypto", searchKeywords: ["Bitcoin", "BTC", "crypto", "cryptocurrency"],
     marketIds: { polygon: "X:BTCUSD", finnhub: "BINANCE:BTCUSDT", twelvedata: "BTC/USD" },
-    economicIds: { openexchangerates: "BTC", exchangerateapi: "BTC", primaryCurrencyForInterestRate: "USD" } // Use USD rate as proxy
+    economicIds: { openexchangerates: "BTC", exchangerateapi: "BTC", primaryCurrencyForInterestRate: "USD" } 
   },
 ];
 
@@ -184,7 +184,7 @@ async function fetchCombinedDataForAsset(
   marketOverviewData?: MarketData; 
   technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; 
   economicIndicatorData?: FetchedEconomicIndicatorData; 
-  fetchedInterestRateData?: InterestRateData; // To store FRED result
+  fetchedInterestRateData?: InterestRateData; 
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
@@ -269,7 +269,7 @@ async function fetchCombinedDataForAsset(
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
             newsSentiment: newsSentiment, 
-            marketOverviewData: { ...marketApiData, error: marketApiData.error, sourceProvider: marketApiData.sourceProvider }, 
+            marketOverviewData: { ...marketApiData, error: marketApiData.error, sourceProvider: marketApiData.sourceProvider, marketStatus: marketApiData.marketStatus || 'unknown' }, 
             technicalIndicatorsData: processedTechIndicators,
             economicIndicatorData: { 
                 indicatorName: economicApiData.indicatorName || 'N/A', 
@@ -294,7 +294,6 @@ async function fetchCombinedDataForAsset(
     if (fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
         derivedInterestRate = fetchedInterestRateData.rate;
     } else {
-        // Fallback to estimation if FRED fails or not applicable
         const primaryCurrencyForRate = asset.economicIds.primaryCurrencyForInterestRate?.toUpperCase();
         switch (primaryCurrencyForRate) {
             case 'EUR': derivedInterestRate = 0.5; break;
@@ -305,15 +304,15 @@ async function fetchCombinedDataForAsset(
             case 'CAD': derivedInterestRate = 0.9; break;
             case 'CHF': derivedInterestRate = 0.25; break;
             case 'NZD': derivedInterestRate = 0.85; break;
-            case 'SGD': derivedInterestRate = 0.6; break; // Needs good FRED series or remains estimation
-            default: derivedInterestRate = 0.25; // Default for unmapped currencies, commodities, crypto
+            case 'SGD': derivedInterestRate = 0.6; break; 
+            default: derivedInterestRate = 0.25; 
         }
         if (asset.type === 'commodity' || asset.type === 'crypto') {
-           derivedInterestRate = 0.25; // Explicit default for these types if not USD based
+           derivedInterestRate = 0.25; 
            if(asset.economicIds.primaryCurrencyForInterestRate === 'USD' && fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
-              derivedInterestRate = fetchedInterestRateData.rate; // Use US rate if specified and fetched
+              derivedInterestRate = fetchedInterestRateData.rate; 
            } else if (asset.economicIds.primaryCurrencyForInterestRate === 'USD') {
-              derivedInterestRate = 1.0; // Fallback US rate estimation
+              derivedInterestRate = 1.0; 
            }
         }
     }
@@ -325,6 +324,7 @@ async function fetchCombinedDataForAsset(
       sentimentScore: parseFloat(derivedSentimentScore.toFixed(2)), 
       interestRate: parseFloat(derivedInterestRate.toFixed(2)), 
       price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") || asset.type === "crypto" ? 2 : 4)),
+      marketStatus: marketApiData.marketStatus
     };
 
     const tradeRecommendation = await generateTradeRecommendation(tradeRecommendationInput);
@@ -351,7 +351,7 @@ async function fetchCombinedDataForAsset(
     return {
         tradeRecommendation,
         newsSentiment,
-        marketOverviewData: {...marketApiData, sourceProvider: marketApiData.sourceProvider},
+        marketOverviewData: {...marketApiData, sourceProvider: marketApiData.sourceProvider, marketStatus: marketApiData.marketStatus || 'unknown'},
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
         fetchedInterestRateData,
@@ -372,7 +372,7 @@ async function fetchCombinedDataForAsset(
     return {
         tradeRecommendation: { recommendation: 'HOLD', reason: `Analysis error: ${finalCombinedError}`, error: finalCombinedError },
         newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${finalCombinedError}`, sentimentScore: 0.0, error: finalCombinedError },
-        marketOverviewData: { assetName: asset.name, timeframe: timeframeId, error: finalCombinedError, sourceProvider: 'Unknown' },
+        marketOverviewData: { assetName: asset.name, timeframe: timeframeId, error: finalCombinedError, sourceProvider: 'Unknown', marketStatus: 'unknown' },
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },
         fetchedInterestRateData: { error: finalCombinedError, sourceProvider: 'FRED'},
@@ -806,7 +806,6 @@ export default function HomePage() {
           </div>
         </div>
         
-        {/* Display Fetched Interest Rate - Optional new small card or integrated into existing */}
         {aiData?.fetchedInterestRateData && aiData.fetchedInterestRateData.rate !== undefined && (
           <div className="mb-4 p-3 border border-border rounded-lg bg-card/50 shadow-sm text-sm">
             <div className="flex items-center gap-2 text-primary">
@@ -904,5 +903,3 @@ export default function HomePage() {
     </div>
   );
 }
-    
-    

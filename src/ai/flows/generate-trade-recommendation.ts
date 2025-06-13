@@ -23,6 +23,7 @@ const GenerateTradeRecommendationInputSchema = z.object({
     .number()
     .describe('The current benchmark annual interest rate for the primary currency in the pair (e.g., for EUR/USD, the ECB rate for EUR). Presented as a percentage, e.g., 1.5 for 1.5%.'),
   price: z.number().describe('Current market price of the currency pair or asset.'),
+  marketStatus: z.string().optional().describe('Current market status (e.g., "open", "closed", "extended-hours"). If "closed" or other non-open status, analysis is based on last available data.'),
 });
 
 export type GenerateTradeRecommendationInput = z.infer<
@@ -57,6 +58,9 @@ const recommendationPrompt = ai.definePrompt({
   - MACD (Value - indicative of trend strength/direction): {{macd}}
   - News Sentiment Score: {{sentimentScore}} (Range: -1 to 1, positive is good for asset, negative is bad)
   - Benchmark Interest Rate (for primary currency/asset's economy): {{interestRate}}%
+  {{#if marketStatus}}
+  - Market Status: {{marketStatus}} (Note: If status is not 'open', this analysis is based on last available data from an active session. Market conditions can change significantly upon reopening.)
+  {{/if}}
 
   General Trading Principles to Consider:
   - RSI: <30 often indicates oversold (potential BUY), >70 often indicates overbought (potential SELL). Mid-range (30-70) is neutral.
@@ -71,8 +75,13 @@ const recommendationPrompt = ai.definePrompt({
 
   Your Output (JSON format):
   Provide only a JSON object with "recommendation" and "reason".
-  The "reason" should be a brief, clear explanation (1-2 sentences) incorporating the key factors influencing your decision.
-  Example:
+  The "reason" should be a brief, clear explanation (1-2 sentences) incorporating the key factors influencing your decision. If market status was provided and not 'open', briefly acknowledge this in the reason.
+  Example (if market closed):
+  {
+    "recommendation": "BUY",
+    "reason": "Based on last session data (market closed), RSI is oversold at {{rsi}}, sentiment remains positive, and MACD shows potential for an upward move. Current interest rates are supportive. Monitor at market open."
+  }
+  Example (if market open):
   {
     "recommendation": "BUY",
     "reason": "RSI is oversold at {{rsi}}, sentiment remains positive, and MACD shows potential for an upward move. Current interest rates are supportive."
@@ -125,4 +134,3 @@ const generateTradeRecommendationFlow = ai.defineFlow(
     }
   }
 );
-
