@@ -28,11 +28,12 @@ const ASSETS = [
   { id: "C:GBPJPY", name: "GBP/JPY", type: "currency" },
   { id: "C:AUDUSD", name: "AUD/USD", type: "currency" },
   { id: "C:USDCAD", name: "USD/CAD", type: "currency" },
-  { id: "C:XAUUSD", name: "Gold (XAU/USD)", type: "commodity" },
-  { id: "C:XAGUSD", name: "Silver (XAG/USD)", type: "commodity" },
-  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" }, // USO is an ETF
+  { id: "XAU/USD", name: "Gold (XAU/USD)", type: "commodity" }, // Polygon uses X:XAUUSD, OpenExchangeRates uses XAU
+  { id: "XAG/USD", name: "Silver (XAG/USD)", type: "commodity" }, // Polygon uses X:XAGUSD, OpenExchangeRates uses XAG
+  { id: "CL", name: "Crude Oil (WTI Futures)", type: "commodity" }, // Polygon uses CLXXXX (specific futures) or just CL for generic front-month related data
   { id: "X:BTCUSD", name: "Bitcoin (BTC/USD)", type: "crypto" },
 ];
+
 
 const TIMEFRAMES = [
   { id: "15min", name: "15min" },
@@ -43,6 +44,9 @@ const TIMEFRAMES = [
 
 const DEFAULT_POLYGON_KEY = 'zWvUPCQiznWJu0wB3hRic9Qr7YuDC26Q';
 const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
+const DEFAULT_TWELVEDATA_KEY = '3a10512308b24fbb880b7a137f824a4d';
+const DEFAULT_FINNHUB_KEY = 'd167e09r01qvtdbgqdfgd167e09r01qvtdbgqdg0';
+const DEFAULT_EXCHANGERATE_API_KEY = 'd30c5b3ab75049fb4f361d6d';
 
 
 const getRsiStatus = (rsiValue?: number): string => {
@@ -71,8 +75,12 @@ async function fetchCombinedDataForAsset(
   assetName: string,
   assetType: string,
   timeframeId: string,
-  polygonApiKey: string | null,
-  openExchangeRatesApiKey: string | null,
+  polygonApiKey: string | null, // Currently active for market data
+  openExchangeRatesApiKey: string | null, // Currently active for economic data
+  // Other keys are not actively used by these actions yet
+  _twelveDataApiKey: string | null,
+  _finnhubApiKey: string | null,
+  _exchangeRateApiKey: string | null
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
   newsSentiment: SummarizeNewsSentimentOutput | null;
@@ -84,7 +92,9 @@ async function fetchCombinedDataForAsset(
   let combinedError: string | undefined;
 
   try {
+    // Market data fetched using Polygon.io key
     const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, polygonApiKey);
+    // Economic data fetched using OpenExchangeRates.org key
     const economicApiDataPromise = fetchEconomicData(assetId, assetName, openExchangeRatesApiKey);
 
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
@@ -92,11 +102,11 @@ async function fetchCombinedDataForAsset(
     let dataErrors: string[] = [];
 
     if (marketApiData.error) {
-      dataErrors.push(`Market Data: ${marketApiData.error}`);
+      dataErrors.push(`Market Data (Polygon.io): ${marketApiData.error}`);
     }
 
     if (economicApiData.error) {
-      dataErrors.push(`Economic Data: ${economicApiData.error}`);
+      dataErrors.push(`Economic Data (OpenExchangeRates.org): ${economicApiData.error}`);
     }
     
     if (dataErrors.length > 0) {
@@ -120,7 +130,8 @@ async function fetchCombinedDataForAsset(
       error: marketApiData.error && (!marketApiData.rsi && !marketApiData.macd) ? marketApiData.error : undefined,
     };
     
-    if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
+    // If critical market data is missing from Polygon due to error, return early with HOLD
+    if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
             newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed due to market data error: ${marketApiData.error}`, error: marketApiData.error },
@@ -138,7 +149,7 @@ async function fetchCombinedDataForAsset(
         };
     }
 
-    const currentPrice = marketApiData.price ?? (assetType === 'crypto' ? 60000 : assetType === 'commodity' ? (assetId.includes("XAU") ? 2300 : (assetId.includes("XAG") ? 25 : (assetId.includes("USO") ? 75 : 100) )) : 1.1);
+    const currentPrice = marketApiData.price ?? (assetType === 'crypto' ? 60000 : assetType === 'commodity' ? (assetId.includes("XAU") ? 2300 : (assetId.includes("XAG") ? 25 : (assetId.includes("CL") ? 75 : 100) )) : 1.1);
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
@@ -150,15 +161,15 @@ async function fetchCombinedDataForAsset(
         `Volatility expected for ${assetType}s amid global economic shifts.`,
         `${assetName} price movements influenced by recent ${timeframeId} trends.`
       ];
-    if (assetId.includes("EURUSD")) newsHeadlines.push("ECB policy decisions in focus."); // C:EURUSD
-    if (assetId.includes("BTC")) newsHeadlines.push("Crypto market sentiment shifts rapidly."); // X:BTCUSD
+    if (assetId.includes("EURUSD")) newsHeadlines.push("ECB policy decisions in focus."); 
+    if (assetId.includes("BTC")) newsHeadlines.push("Crypto market sentiment shifts rapidly."); 
 
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
       macd: parseFloat(macdValue.toFixed(4)),
       sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), 
       interestRate: interestRateForAI, 
-      price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("USO") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
+      price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("CL") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
     };
 
     const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: assetName, newsHeadlines };
@@ -188,20 +199,21 @@ async function fetchCombinedDataForAsset(
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    let finalCombinedError = `Unexpected error in data aggregation for ${assetName}: ${errorMessage}`;
     console.error(`Error in fetchCombinedDataForAsset for ${assetName} (${timeframeId}):`, errorMessage);
-    combinedError = errorMessage;
+    
     const defaultTechIndicators: ProcessedTechnicalIndicatorsData = {
         rsi: { value: undefined, status: 'N/A' },
         macd: { value: undefined, signal: undefined, histogram: undefined, status: 'N/A' },
-        error: combinedError,
+        error: finalCombinedError,
     };
     return {
-        tradeRecommendation: { recommendation: 'HOLD', reason: `Analysis error: ${combinedError}`, error: combinedError },
-        newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${combinedError}`, error: combinedError },
-        marketOverviewData: { assetName, timeframe: timeframeId, error: combinedError },
+        tradeRecommendation: { recommendation: 'HOLD', reason: `Analysis error: ${finalCombinedError}`, error: finalCombinedError },
+        newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${finalCombinedError}`, error: finalCombinedError },
+        marketOverviewData: { assetName, timeframe: timeframeId, error: finalCombinedError },
         technicalIndicatorsData: defaultTechIndicators,
-        economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', source: 'Error', error: combinedError },
-        combinedError
+        economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', source: 'Error', error: finalCombinedError },
+        combinedError: finalCombinedError
     };
   }
 }
@@ -224,58 +236,71 @@ export default function HomePage() {
   const [lastError, setLastError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // Polygon.io (Market Data)
   const [polygonApiKey, setPolygonApiKey] = useState<string | null>(null);
-  const [openExchangeRatesApiKey, setOpenExchangeRatesApiKey] = useState<string | null>(null);
   const [tempPolygonKey, setTempPolygonKey] = useState('');
-  const [tempOpenExchangeRatesKey, setTempOpenExchangeRatesKey] = useState('');
   const [showPolygonKey, setShowPolygonKey] = useState(false);
+
+  // OpenExchangeRates.org (Economic Data)
+  const [openExchangeRatesApiKey, setOpenExchangeRatesApiKey] = useState<string | null>(null);
+  const [tempOpenExchangeRatesKey, setTempOpenExchangeRatesKey] = useState('');
   const [showOpenExchangeRatesKey, setShowOpenExchangeRatesKey] = useState(false);
+  
+  // Twelve Data
+  const [twelveDataApiKey, setTwelveDataApiKey] = useState<string | null>(null);
+  const [tempTwelveDataKey, setTempTwelveDataKey] = useState('');
+  const [showTwelveDataKey, setShowTwelveDataKey] = useState(false);
+
+  // Finnhub.io
+  const [finnhubApiKey, setFinnhubApiKey] = useState<string | null>(null);
+  const [tempFinnhubKey, setTempFinnhubKey] = useState('');
+  const [showFinnhubKey, setShowFinnhubKey] = useState(false);
+
+  // ExchangeRate-API.com
+  const [exchangeRateApiKey, setExchangeRateApiKey] = useState<string | null>(null);
+  const [tempExchangeRateApiKey, setTempExchangeRateApiKey] = useState('');
+  const [showExchangeRateApiKey, setShowExchangeRateApiKey] = useState(false);
 
 
   useEffect(() => {
-    let keyToUseForPolygon = localStorage.getItem('polygonApiKey');
-    if (!keyToUseForPolygon) {
-      keyToUseForPolygon = DEFAULT_POLYGON_KEY;
-      localStorage.setItem('polygonApiKey', keyToUseForPolygon);
-    }
-    setPolygonApiKey(keyToUseForPolygon);
-    setTempPolygonKey(keyToUseForPolygon);
+    const initKey = (storageKey: string, defaultKey: string, setKeyFn: (key: string | null) => void, setTempKeyFn: (key: string) => void) => {
+      let keyToUse = localStorage.getItem(storageKey);
+      if (!keyToUse) {
+        keyToUse = defaultKey;
+        localStorage.setItem(storageKey, keyToUse);
+      }
+      setKeyFn(keyToUse);
+      setTempKeyFn(keyToUse);
+    };
 
-    let keyToUseForOpenExchange = localStorage.getItem('openExchangeRatesApiKey');
-    if (!keyToUseForOpenExchange) {
-      keyToUseForOpenExchange = DEFAULT_OPEN_EXCHANGE_RATES_KEY;
-      localStorage.setItem('openExchangeRatesApiKey', keyToUseForOpenExchange);
-    }
-    setOpenExchangeRatesApiKey(keyToUseForOpenExchange);
-    setTempOpenExchangeRatesKey(keyToUseForOpenExchange);
+    initKey('polygonApiKey', DEFAULT_POLYGON_KEY, setPolygonApiKey, setTempPolygonKey);
+    initKey('openExchangeRatesApiKey', DEFAULT_OPEN_EXCHANGE_RATES_KEY, setOpenExchangeRatesApiKey, setTempOpenExchangeRatesKey);
+    initKey('twelveDataApiKey', DEFAULT_TWELVEDATA_KEY, setTwelveDataApiKey, setTempTwelveDataKey);
+    initKey('finnhubApiKey', DEFAULT_FINNHUB_KEY, setFinnhubApiKey, setTempFinnhubKey);
+    initKey('exchangeRateApiKey', DEFAULT_EXCHANGERATE_API_KEY, setExchangeRateApiKey, setTempExchangeRateApiKey);
     
     setIsLoading(false); 
   }, []);
 
-
-  const handleSetPolygonKey = () => {
-    if (tempPolygonKey.trim()) {
-      setPolygonApiKey(tempPolygonKey.trim());
-      localStorage.setItem('polygonApiKey', tempPolygonKey.trim());
-      toast({ title: "Polygon.io API Key Set", description: "Market data fetching enabled." });
-      if (openExchangeRatesApiKey) {
-        loadData(selectedAsset, selectedTimeframe, tempPolygonKey.trim(), openExchangeRatesApiKey);
+  const handleSetKey = (tempKey: string, setKeyFn: (key: string | null) => void, storageKey: string, keyName: string) => {
+    if (tempKey.trim()) {
+      setKeyFn(tempKey.trim());
+      localStorage.setItem(storageKey, tempKey.trim());
+      toast({ title: `${keyName} API Key Set`, description: "Data fetching for this provider is configured." });
+      // Conditionally call loadData if all *required* keys are set
+      if (keyName === "Polygon.io" && openExchangeRatesApiKey) {
+        loadData(selectedAsset, selectedTimeframe, tempKey.trim(), openExchangeRatesApiKey, twelveDataApiKey, finnhubApiKey, exchangeRateApiKey);
+      } else if (keyName === "Open Exchange Rates" && polygonApiKey) {
+        loadData(selectedAsset, selectedTimeframe, polygonApiKey, tempKey.trim(), twelveDataApiKey, finnhubApiKey, exchangeRateApiKey);
+      } else if (polygonApiKey && openExchangeRatesApiKey) { // If other keys are set, and main ones are already there
+        loadData(selectedAsset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey, 
+            storageKey === 'twelveDataApiKey' ? tempKey.trim() : twelveDataApiKey,
+            storageKey === 'finnhubApiKey' ? tempKey.trim() : finnhubApiKey,
+            storageKey === 'exchangeRateApiKey' ? tempKey.trim() : exchangeRateApiKey
+        );
       }
     } else {
-      toast({ title: "API Key Empty", description: "Please enter a valid Polygon.io API key.", variant: "destructive" });
-    }
-  };
-
-  const handleSetOpenExchangeRatesKey = () => {
-    if (tempOpenExchangeRatesKey.trim()) {
-      setOpenExchangeRatesApiKey(tempOpenExchangeRatesKey.trim());
-      localStorage.setItem('openExchangeRatesApiKey', tempOpenExchangeRatesKey.trim());
-      toast({ title: "Open Exchange Rates API Key Set", description: "Economic data fetching enabled." });
-      if (polygonApiKey) {
-         loadData(selectedAsset, selectedTimeframe, polygonApiKey, tempOpenExchangeRatesKey.trim());
-      }
-    } else {
-      toast({ title: "API Key Empty", description: "Please enter a valid Open Exchange Rates API key.", variant: "destructive" });
+      toast({ title: "API Key Empty", description: `Please enter a valid ${keyName} API key.`, variant: "destructive" });
     }
   };
 
@@ -284,10 +309,13 @@ export default function HomePage() {
       asset: typeof ASSETS[0], 
       timeframe: typeof TIMEFRAMES[0],
       currentPolygonKey: string | null,
-      currentOpenExchangeRatesKey: string | null
+      currentOpenExchangeRatesKey: string | null,
+      currentTwelveDataKey: string | null,
+      currentFinnhubKey: string | null,
+      currentExchangeRateApiKey: string | null,
     ) => {
     if (!currentPolygonKey || !currentOpenExchangeRatesKey) {
-      setLastError("One or more API keys are not set. Please set both API keys to fetch all data.");
+      setLastError("Polygon.io and Open Exchange Rates API keys are required for core functionality. Please set them to fetch data.");
       setIsLoading(false); 
       setAiData(null); 
       return;
@@ -301,7 +329,10 @@ export default function HomePage() {
         asset.type, 
         timeframe.id,
         currentPolygonKey,
-        currentOpenExchangeRatesKey
+        currentOpenExchangeRatesKey,
+        currentTwelveDataKey,
+        currentFinnhubKey,
+        currentExchangeRateApiKey
     );
     setAiData(data);
     if (data.combinedError) {
@@ -322,20 +353,21 @@ export default function HomePage() {
   }, []); 
 
   useEffect(() => {
+    // Only load data if the required keys (Polygon & OpenExchangeRates) are set
     if (polygonApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
-      if (!aiData) {
-         loadData(selectedAsset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey);
+      if (!aiData) { // And if data hasn't been loaded yet for the current selection
+         loadData(selectedAsset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey, twelveDataApiKey, finnhubApiKey, exchangeRateApiKey);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [polygonApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
+  }, [polygonApiKey, openExchangeRatesApiKey, twelveDataApiKey, finnhubApiKey, exchangeRateApiKey, selectedAsset, selectedTimeframe, loadData]); // Added other keys to dependency array
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
     if (asset.id !== selectedAsset.id) {
       setSelectedAsset(asset);
       if (polygonApiKey && openExchangeRatesApiKey) {
-        loadData(asset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey);
+        loadData(asset, selectedTimeframe, polygonApiKey, openExchangeRatesApiKey, twelveDataApiKey, finnhubApiKey, exchangeRateApiKey);
       }
     }
   };
@@ -344,14 +376,14 @@ export default function HomePage() {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
        if (polygonApiKey && openExchangeRatesApiKey) {
-        loadData(selectedAsset, timeframe, polygonApiKey, openExchangeRatesApiKey);
+        loadData(selectedAsset, timeframe, polygonApiKey, openExchangeRatesApiKey, twelveDataApiKey, finnhubApiKey, exchangeRateApiKey);
       }
     }
   };
 
   const handleRefresh = async () => {
     if (!polygonApiKey || !openExchangeRatesApiKey) {
-      toast({ title: "API Keys Required", description: "Please set both API keys before refreshing.", variant: "destructive" });
+      toast({ title: "Core API Keys Required", description: "Please set Polygon.io and Open Exchange Rates API keys before refreshing.", variant: "destructive" });
       return;
     }
       setIsRefreshing(true);
@@ -362,7 +394,10 @@ export default function HomePage() {
           selectedAsset.type, 
           selectedTimeframe.id,
           polygonApiKey,
-          openExchangeRatesApiKey
+          openExchangeRatesApiKey,
+          twelveDataApiKey,
+          finnhubApiKey,
+          exchangeRateApiKey
         );
       setAiData(data);
       if (data.combinedError) {
@@ -387,50 +422,114 @@ export default function HomePage() {
   const isDataFetchingDisabled = isLoading || isRefreshing || !polygonApiKey || !openExchangeRatesApiKey;
   const isKeySetupPhase = !polygonApiKey || !openExchangeRatesApiKey;
 
+  const ApiKeyInputGroup = ({
+    label,
+    id,
+    value,
+    onChange,
+    showKey,
+    onToggleShowKey,
+    onSetKey,
+    placeholder,
+    providerName
+  }: {
+    label: string;
+    id: string;
+    value: string;
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+    showKey: boolean;
+    onToggleShowKey: () => void;
+    onSetKey: () => void;
+    placeholder: string;
+    providerName: string;
+  }) => (
+    <div>
+      <label htmlFor={id} className="block text-sm font-medium text-foreground mb-1">{label}</label>
+      <div className="flex gap-2 items-center">
+        <Input
+          id={id}
+          type={showKey ? "text" : "password"}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          className="flex-grow"
+        />
+        <Button variant="ghost" size="icon" onClick={onToggleShowKey} aria-label={showKey ? `Hide ${providerName} API key` : `Show ${providerName} API key`}>
+          {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+        </Button>
+        <Button onClick={onSetKey} size="sm"><KeyRound size={16} /> Set</Button>
+      </div>
+    </div>
+  );
+
+
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <Header />
       <main className="flex-grow container mx-auto p-4 md:p-8">
         <div className="mb-6 p-4 border border-border rounded-lg bg-card shadow-md space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                    <label htmlFor="polygonKeyInput" className="block text-sm font-medium text-foreground mb-1">Polygon.io API Key:</label>
-                    <div className="flex gap-2 items-center">
-                        <Input 
-                            id="polygonKeyInput"
-                            type={showPolygonKey ? "text" : "password"}
-                            value={tempPolygonKey} 
-                            onChange={(e) => setTempPolygonKey(e.target.value)}
-                            placeholder="Enter Polygon.io API Key"
-                            className="flex-grow"
-                        />
-                        <Button variant="ghost" size="icon" onClick={() => setShowPolygonKey(!showPolygonKey)} aria-label={showPolygonKey ? "Hide API key" : "Show API key"}>
-                            {showPolygonKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </Button>
-                        <Button onClick={handleSetPolygonKey} size="sm"><KeyRound size={16} /> Set</Button>
-                    </div>
-                </div>
-                <div>
-                    <label htmlFor="openExchangeRatesKeyInput" className="block text-sm font-medium text-foreground mb-1">Open Exchange Rates API Key:</label>
-                    <div className="flex gap-2 items-center">
-                        <Input 
-                            id="openExchangeRatesKeyInput"
-                            type={showOpenExchangeRatesKey ? "text" : "password"} 
-                            value={tempOpenExchangeRatesKey} 
-                            onChange={(e) => setTempOpenExchangeRatesKey(e.target.value)}
-                            placeholder="Enter Open Exchange Rates API Key"
-                            className="flex-grow"
-                        />
-                         <Button variant="ghost" size="icon" onClick={() => setShowOpenExchangeRatesKey(!showOpenExchangeRatesKey)} aria-label={showOpenExchangeRatesKey ? "Hide API key" : "Show API key"}>
-                            {showOpenExchangeRatesKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </Button>
-                        <Button onClick={handleSetOpenExchangeRatesKey} size="sm"><KeyRound size={16} /> Set</Button>
-                    </div>
-                </div>
+            <h3 className="text-lg font-semibold text-foreground mb-2">API Key Configuration</h3>
+            <div className="grid md:grid-cols-2 gap-x-4 gap-y-6">
+                <ApiKeyInputGroup
+                    label="Polygon.io API Key (Market Data):"
+                    id="polygonKeyInput"
+                    value={tempPolygonKey}
+                    onChange={(e) => setTempPolygonKey(e.target.value)}
+                    showKey={showPolygonKey}
+                    onToggleShowKey={() => setShowPolygonKey(!showPolygonKey)}
+                    onSetKey={() => handleSetKey(tempPolygonKey, setPolygonApiKey, 'polygonApiKey', 'Polygon.io')}
+                    placeholder="Enter Polygon.io API Key"
+                    providerName="Polygon.io"
+                />
+                <ApiKeyInputGroup
+                    label="Open Exchange Rates API Key (Economic Data):"
+                    id="openExchangeRatesKeyInput"
+                    value={tempOpenExchangeRatesKey}
+                    onChange={(e) => setTempOpenExchangeRatesKey(e.target.value)}
+                    showKey={showOpenExchangeRatesKey}
+                    onToggleShowKey={() => setShowOpenExchangeRatesKey(!showOpenExchangeRatesKey)}
+                    onSetKey={() => handleSetKey(tempOpenExchangeRatesKey, setOpenExchangeRatesApiKey, 'openExchangeRatesApiKey', 'Open Exchange Rates')}
+                    placeholder="Enter Open Exchange Rates API Key"
+                    providerName="Open Exchange Rates"
+                />
+                 <ApiKeyInputGroup
+                    label="Twelve Data API Key:"
+                    id="twelveDataKeyInput"
+                    value={tempTwelveDataKey}
+                    onChange={(e) => setTempTwelveDataKey(e.target.value)}
+                    showKey={showTwelveDataKey}
+                    onToggleShowKey={() => setShowTwelveDataKey(!showTwelveDataKey)}
+                    onSetKey={() => handleSetKey(tempTwelveDataKey, setTwelveDataApiKey, 'twelveDataApiKey', 'Twelve Data')}
+                    placeholder="Enter Twelve Data API Key"
+                    providerName="Twelve Data"
+                />
+                <ApiKeyInputGroup
+                    label="Finnhub.io API Key:"
+                    id="finnhubKeyInput"
+                    value={tempFinnhubKey}
+                    onChange={(e) => setTempFinnhubKey(e.target.value)}
+                    showKey={showFinnhubKey}
+                    onToggleShowKey={() => setShowFinnhubKey(!showFinnhubKey)}
+                    onSetKey={() => handleSetKey(tempFinnhubKey, setFinnhubApiKey, 'finnhubApiKey', 'Finnhub.io')}
+                    placeholder="Enter Finnhub.io API Key"
+                    providerName="Finnhub.io"
+                />
+                <ApiKeyInputGroup
+                    label="ExchangeRate-API.com API Key:"
+                    id="exchangeRateApiKeyInput"
+                    value={tempExchangeRateApiKey}
+                    onChange={(e) => setTempExchangeRateApiKey(e.target.value)}
+                    showKey={showExchangeRateApiKey}
+                    onToggleShowKey={() => setShowExchangeRateApiKey(!showExchangeRateApiKey)}
+                    onSetKey={() => handleSetKey(tempExchangeRateApiKey, setExchangeRateApiKey, 'exchangeRateApiKey', 'ExchangeRate-API.com')}
+                    placeholder="Enter ExchangeRate-API.com API Key"
+                    providerName="ExchangeRate-API.com"
+                />
             </div>
              <div className="text-xs text-muted-foreground p-2 bg-muted/30 rounded-md mt-2">
                 <AlertTriangle size={14} className="inline mr-1 text-destructive" />
-                API keys are auto-filled and stored in your browser's local storage for convenience. For production, keys should be server-managed. Data fetching is disabled until keys are set.
+                API keys are auto-filled and stored in your browser's local storage for convenience. For production, keys should be server-managed. 
+                Currently, <strong>Polygon.io</strong> is used for market data and <strong>OpenExchangeRates.org</strong> for economic data. Other keys are stored but not actively used by the backend yet.
             </div>
         </div>
 
@@ -492,7 +591,7 @@ export default function HomePage() {
             <div className="text-center py-10">
                 <KeyRound size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
-                    Please set valid API keys above to enable data fetching and AI analysis.
+                    Please ensure Polygon.io and Open Exchange Rates API keys are set above to enable core data fetching and AI analysis.
                 </p>
                 <p className="text-sm text-muted-foreground mt-2">
                     Default keys have been pre-filled. If they are incorrect or restricted, please update them.
@@ -552,6 +651,7 @@ export default function HomePage() {
       <footer className="text-center p-4 text-sm text-muted-foreground border-t border-border/50">
         Market data from <a href="https://polygon.io" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Polygon.io</a>.
         Exchange rate data from <a href="https://openexchangerates.org" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">OpenExchangeRates.org</a>.
+        Other API providers can be configured.
         © {new Date().getFullYear()} ForeSight AI. All rights reserved.
       </footer>
     </div>
