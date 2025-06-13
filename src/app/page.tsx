@@ -62,6 +62,26 @@ const ASSETS: Asset[] = [
     marketIds: { polygon: "C:USDCAD", finnhub: "OANDA:USD_CAD", twelvedata: "USD/CAD" },
     economicIds: { openexchangerates: "USD", exchangerateapi: "USD" } // Base is USD
   },
+  {
+    name: "USD/JPY", type: "currency",
+    marketIds: { polygon: "C:USDJPY", finnhub: "OANDA:USD_JPY", twelvedata: "USD/JPY" },
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+  },
+  {
+    name: "USD/CHF", type: "currency",
+    marketIds: { polygon: "C:USDCHF", finnhub: "OANDA:USD_CHF", twelvedata: "USD/CHF" },
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+  },
+  {
+    name: "NZD/USD", type: "currency",
+    marketIds: { polygon: "C:NZDUSD", finnhub: "OANDA:NZD_USD", twelvedata: "NZD/USD" },
+    economicIds: { openexchangerates: "NZD", exchangerateapi: "NZD" }
+  },
+  {
+    name: "EUR/GBP", type: "currency",
+    marketIds: { polygon: "C:EURGBP", finnhub: "OANDA:EUR_GBP", twelvedata: "EUR/GBP" },
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+  },
   { 
     name: "Gold (XAU/USD)", type: "commodity", 
     marketIds: { polygon: "X:XAUUSD", finnhub: "FXCM:XAU/USD", twelvedata: "XAU/USD" }, // Finnhub uses various symbols, FXCM:XAU/USD is one
@@ -700,4 +720,3 @@ export default function HomePage() {
 }
     
     
-
