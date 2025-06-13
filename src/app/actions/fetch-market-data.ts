@@ -34,13 +34,13 @@ function mapTimeframeToInterval(timeframeId: string): string {
 export async function fetchMarketData(
   assetId: string,
   assetName: string,
-  timeframeId: string
+  timeframeId: string,
+  apiKey: string | null // API key passed as argument
 ): Promise<MarketData> {
-  const apiKey = process.env.TWELVEDATA_API_KEY;
 
   if (!apiKey) {
-    console.error('Twelve Data API key is not configured in .env file.');
-    return { error: 'API key not configured on the server.', assetName, timeframe: timeframeId };
+    console.error('Twelve Data API key was not provided to fetchMarketData action.');
+    return { error: 'API key not provided to server action.', assetName, timeframe: timeframeId };
   }
 
   const interval = mapTimeframeToInterval(timeframeId);
@@ -65,20 +65,20 @@ export async function fetchMarketData(
     // Process Price Data
     if (priceResponse.ok) {
       priceData = await priceResponse.json();
-      if (priceData.code === 401 || priceData.status === 'error' && priceData.message?.includes('API key is invalid')) {
-        return { error: 'Invalid Twelve Data API Key configured on server.', assetName, timeframe: timeframeId };
+      if (priceData.code === 401 || (priceData.status === 'error' && priceData.message?.toLowerCase().includes('api key is invalid'))) {
+        return { error: 'Invalid Twelve Data API Key. Please check the key.', assetName, timeframe: timeframeId };
       }
     } else {
       const errorText = await priceResponse.text();
       console.error(`Error fetching price for ${symbol}: ${priceResponse.status} ${errorText}`);
-      if (priceResponse.status === 401) return { error: 'Invalid Twelve Data API Key configured on server.', assetName, timeframe: timeframeId };
+      if (priceResponse.status === 401) return { error: 'Invalid Twelve Data API Key. Please check the key.', assetName, timeframe: timeframeId };
       apiErrorMessages.push(`Price: ${priceResponse.status} ${priceResponse.statusText}`);
     }
 
     // Process RSI Data
     if (rsiResponse.ok) {
       rsiData = await rsiResponse.json();
-      if (rsiData.code === 401 || rsiData.status === 'error' && rsiData.message?.includes('API key is invalid')) {
+      if (rsiData.code === 401 || (rsiData.status === 'error' && rsiData.message?.toLowerCase().includes('api key is invalid'))) {
          apiErrorMessages.push('RSI: API key invalid (as per RSI endpoint).');
       }
     } else {
@@ -94,7 +94,7 @@ export async function fetchMarketData(
     // Process MACD Data
     if (macdResponse.ok) {
       macdData = await macdResponse.json();
-       if (macdData.code === 401 || macdData.status === 'error' && macdData.message?.includes('API key is invalid')) {
+       if (macdData.code === 401 || (macdData.status === 'error' && macdData.message?.toLowerCase().includes('api key is invalid'))) {
          apiErrorMessages.push('MACD: API key invalid (as per MACD endpoint).');
       }
     } else {
@@ -107,9 +107,10 @@ export async function fetchMarketData(
       }
     }
     
+    // If all responses indicate an invalid API key, return a specific error
     const isApiKeyInvalidError = apiErrorMessages.some(msg => msg.toLowerCase().includes('api key invalid'));
     if (isApiKeyInvalidError && apiErrorMessages.every(msg => msg.toLowerCase().includes('api key invalid') || msg.toLowerCase().includes('api key may be invalid'))) {
-        return { error: 'Invalid Twelve Data API Key configured on server. Please check the key.', assetName, timeframe: timeframeId };
+        return { error: 'Invalid Twelve Data API Key. Please check the key.', assetName, timeframe: timeframeId };
     }
 
 
@@ -123,7 +124,7 @@ export async function fetchMarketData(
 
     if (priceData && priceData.price) {
       result.price = parseFloat(priceData.price);
-    } else if (priceData && priceData.status === 'error' && !priceData.message?.includes('API key is invalid')) {
+    } else if (priceData && priceData.status === 'error' && !priceData.message?.toLowerCase().includes('api key is invalid')) {
       console.warn(`TwelveData price API error for ${symbol}: ${priceData.message}`);
       if (!result.error) result.error = '';
       result.error += `Price data error: ${priceData.message}. `;
@@ -131,7 +132,7 @@ export async function fetchMarketData(
 
     if (rsiData && rsiData.values && rsiData.values.length > 0) {
       result.rsi = parseFloat(rsiData.values[0].rsi);
-    } else if (rsiData && rsiData.status === 'error' && !rsiData.message?.includes('API key is invalid')) {
+    } else if (rsiData && rsiData.status === 'error' && !rsiData.message?.toLowerCase().includes('api key is invalid')) {
       console.warn(`TwelveData RSI API error for ${symbol} (${interval}): ${rsiData.message}`);
       if (!result.error) result.error = '';
       result.error += `RSI data error: ${rsiData.message}. `;
@@ -147,7 +148,7 @@ export async function fetchMarketData(
         signal: parseFloat(macdData.values[0].macd_signal),
         histogram: parseFloat(macdData.values[0].macd_hist),
       };
-    } else if (macdData && macdData.status === 'error' && !macdData.message?.includes('API key is invalid')) {
+    } else if (macdData && macdData.status === 'error' && !macdData.message?.toLowerCase().includes('api key is invalid')) {
       console.warn(`TwelveData MACD API error for ${symbol} (${interval}): ${macdData.message}`);
       if (!result.error) result.error = '';
       result.error += `MACD data error: ${macdData.message}. `;
