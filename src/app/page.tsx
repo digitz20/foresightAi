@@ -456,7 +456,7 @@ export default function HomePage() {
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey };
     if (!currentApiKeys.polygon && !currentApiKeys.finnhub && !currentApiKeys.twelvedata) {
       toast({ title: "Market Data API Key Required", description: "Please set at least one market data API key (Polygon, Finnhub, or TwelveData).", variant: "destructive" });
@@ -472,13 +472,46 @@ export default function HomePage() {
          setLastError(null);
       }
       setIsRefreshing(false);
-  };
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, selectedAsset, selectedTimeframe, toast]); // Removed loadData from here as it creates a circular dependency risk or too many re-renders. handleRefresh itself does what loadData does in this specific context.
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
   const isAnyMarketKeySet = !!(polygonApiKey || finnhubApiKey || twelveDataApiKey);
-  const isDataFetchingDisabled = isLoading || isRefreshing || !isAnyMarketKeySet;
   const isKeySetupPhase = !isAnyMarketKeySet;
+  const isDataFetchingDisabled = isLoading || isRefreshing || isKeySetupPhase;
+
+
+  // Auto-refresh logic
+  useEffect(() => {
+    if (isKeySetupPhase || isLoading || isRefreshing || !aiData) {
+      return; // Don't run if setting up keys, already loading/refreshing, or no initial data
+    }
+
+    const getIntervalMs = (timeframeId: string): number => {
+      switch (timeframeId) {
+        case '15min': return 1 * 60 * 1000;  // 1 minute
+        case '1H':    return 5 * 60 * 1000;  // 5 minutes
+        case '4H':    return 15 * 60 * 1000; // 15 minutes
+        case '1D':    return 30 * 60 * 1000; // 30 minutes
+        default:      return 5 * 60 * 1000;  // Default to 5 mins
+      }
+    };
+
+    const intervalMs = getIntervalMs(selectedTimeframe.id);
+    
+    const intervalId = setInterval(() => {
+      if (!document.hidden && !isRefreshing && !isLoading) { // Only refresh if tab is visible and not already refreshing/loading
+        // console.log(`Auto-refresh triggered for ${selectedAsset.name} (${selectedTimeframe.name}) at ${new Date().toLocaleTimeString()}`);
+        handleRefresh();
+      }
+    }, intervalMs);
+
+    return () => {
+      clearInterval(intervalId);
+      // console.log(`Cleared auto-refresh for ${selectedAsset.name} (${selectedTimeframe.name})`);
+    };
+  }, [selectedAsset, selectedTimeframe, handleRefresh, isKeySetupPhase, isLoading, isRefreshing, aiData]);
+
 
   const ApiKeyInputGroup = ({
     label,
@@ -605,7 +638,7 @@ export default function HomePage() {
                   variant={selectedAsset.name === asset.name ? "default" : "outline"}
                   onClick={() => handleAssetChange(asset)}
                   size="sm"
-                  disabled={isDataFetchingDisabled || isKeySetupPhase}
+                  disabled={isDataFetchingDisabled}
                 >
                   {asset.name}
                 </Button>
@@ -621,14 +654,14 @@ export default function HomePage() {
                   variant={selectedTimeframe.id === tf.id ? "default" : "outline"}
                   onClick={() => handleTimeframeChange(tf)}
                   size="sm"
-                  disabled={isDataFetchingDisabled || isKeySetupPhase}
+                  disabled={isDataFetchingDisabled}
                 >
                   {tf.name}
                 </Button>
               ))}
             </div>
           </div>
-          <Button onClick={handleRefresh} disabled={isDataFetchingDisabled || isKeySetupPhase} className="self-end" size="sm">
+          <Button onClick={handleRefresh} disabled={isDataFetchingDisabled} className="self-end" size="sm">
             {isRefreshing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
