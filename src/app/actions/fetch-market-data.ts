@@ -32,14 +32,15 @@ function mapTimeframeToInterval(timeframeId: string): string {
 }
 
 export async function fetchMarketData(
-  apiKey: string, // API key passed as an argument
   assetId: string,
   assetName: string,
   timeframeId: string
 ): Promise<MarketData> {
+  const apiKey = process.env.TWELVEDATA_API_KEY;
+
   if (!apiKey) {
-    console.error('Twelve Data API key is not provided to fetchMarketData action.');
-    return { error: 'API key not provided.', assetName, timeframe: timeframeId };
+    console.error('Twelve Data API key is not configured in .env file.');
+    return { error: 'API key not configured on the server.', assetName, timeframe: timeframeId };
   }
 
   const interval = mapTimeframeToInterval(timeframeId);
@@ -65,12 +66,12 @@ export async function fetchMarketData(
     if (priceResponse.ok) {
       priceData = await priceResponse.json();
       if (priceData.code === 401 || priceData.status === 'error' && priceData.message?.includes('API key is invalid')) {
-        return { error: 'Invalid Twelve Data API Key.', assetName, timeframe: timeframeId };
+        return { error: 'Invalid Twelve Data API Key configured on server.', assetName, timeframe: timeframeId };
       }
     } else {
       const errorText = await priceResponse.text();
       console.error(`Error fetching price for ${symbol}: ${priceResponse.status} ${errorText}`);
-      if (priceResponse.status === 401) return { error: 'Invalid Twelve Data API Key.', assetName, timeframe: timeframeId };
+      if (priceResponse.status === 401) return { error: 'Invalid Twelve Data API Key configured on server.', assetName, timeframe: timeframeId };
       apiErrorMessages.push(`Price: ${priceResponse.status} ${priceResponse.statusText}`);
     }
 
@@ -78,17 +79,14 @@ export async function fetchMarketData(
     if (rsiResponse.ok) {
       rsiData = await rsiResponse.json();
       if (rsiData.code === 401 || rsiData.status === 'error' && rsiData.message?.includes('API key is invalid')) {
-         // Do not return early, allow other calls to potentially succeed or fail similarly.
          apiErrorMessages.push('RSI: API key invalid (as per RSI endpoint).');
       }
     } else {
       const errorText = await rsiResponse.text();
       console.error(`Error fetching RSI for ${symbol} (${interval}): ${rsiResponse.status} ${errorText}`);
-       if (rsiResponse.status !== 401) { // If it's not an auth error, add it to general errors
+       if (rsiResponse.status !== 401) { 
         apiErrorMessages.push(`RSI: ${rsiResponse.status} ${rsiResponse.statusText}`);
       } else {
-        // If it *is* an auth error from RSI, and price didn't catch it, this indicates key is bad.
-        // However, the price check should ideally catch this first.
          apiErrorMessages.push('RSI: API key may be invalid.');
       }
     }
@@ -109,10 +107,9 @@ export async function fetchMarketData(
       }
     }
     
-    // If any endpoint reported an invalid API key, and it's the only type of error, consolidate it.
     const isApiKeyInvalidError = apiErrorMessages.some(msg => msg.toLowerCase().includes('api key invalid'));
     if (isApiKeyInvalidError && apiErrorMessages.every(msg => msg.toLowerCase().includes('api key invalid') || msg.toLowerCase().includes('api key may be invalid'))) {
-        return { error: 'Invalid Twelve Data API Key. Please check the key and try again.', assetName, timeframe: timeframeId };
+        return { error: 'Invalid Twelve Data API Key configured on server. Please check the key.', assetName, timeframe: timeframeId };
     }
 
 
@@ -127,7 +124,6 @@ export async function fetchMarketData(
     if (priceData && priceData.price) {
       result.price = parseFloat(priceData.price);
     } else if (priceData && priceData.status === 'error' && !priceData.message?.includes('API key is invalid')) {
-      // Don't repeat API key error if already handled or will be handled by a more general message
       console.warn(`TwelveData price API error for ${symbol}: ${priceData.message}`);
       if (!result.error) result.error = '';
       result.error += `Price data error: ${priceData.message}. `;
@@ -161,7 +157,6 @@ export async function fetchMarketData(
       result.error += `MACD data for ${symbol} may not be available on the current API plan. `;
     }
 
-    // Consolidate remaining non-API key specific errors
     const generalApiErrors = apiErrorMessages.filter(msg => !msg.toLowerCase().includes('api key invalid') && !msg.toLowerCase().includes('api key may be invalid'));
     if (generalApiErrors.length > 0 && (result.price || result.rsi || result.macd)) {
         if (!result.error) result.error = '';

@@ -9,11 +9,8 @@ import TechnicalIndicatorsCard from '@/components/dashboard/TechnicalIndicatorsC
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard from '@/components/dashboard/EconomicIndicatorCard';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { RefreshCw, Loader2, Clock, AlertTriangle, KeyRound, Info } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import { generateTradeRecommendation, GenerateTradeRecommendationInput, GenerateTradeRecommendationOutput } from '@/ai/flows/generate-trade-recommendation';
 import { summarizeNewsSentiment, SummarizeNewsSentimentInput, SummarizeNewsSentimentOutput } from '@/ai/flows/summarize-news-sentiment';
@@ -38,7 +35,6 @@ const TIMEFRAMES = [
 ];
 
 async function fetchCombinedDataForAsset(
-  apiKey: string | null,
   assetId: string,
   assetName: string,
   assetType: string,
@@ -50,22 +46,10 @@ async function fetchCombinedDataForAsset(
   technicalIndicatorsData?: any;
   economicIndicatorData?: any;
   marketDataError?: string;
-  apiKeyMissing?: boolean;
 }> {
-  if (!apiKey) {
-    return {
-      tradeRecommendation: { recommendation: 'HOLD', reason: 'API key missing. Cannot fetch market data.', error: 'API key missing.' },
-      newsSentiment: { overallSentiment: 'Unknown', summary: 'API key missing. Cannot perform sentiment analysis.', error: 'API key missing.' },
-      marketOverviewData: { pair: assetName, value: 0, change: "N/A", isPositive: false, timeframe: timeframeId, error: 'API key missing.' },
-      technicalIndicatorsData: { rsi: { value: 0, status: 'N/A' }, macd: { value: 0, signal: 0, histogram: 0, status: 'N/A' }, error: 'API key missing.' },
-      economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', previous: 'N/A', impact: 'N/A', source: 'Error', error: 'API key missing.' },
-      apiKeyMissing: true,
-    };
-  }
-
   let marketDataError: string | undefined;
   try {
-    const marketApiData: MarketData = await fetchMarketData(apiKey, assetId, assetName, timeframeId);
+    const marketApiData: MarketData = await fetchMarketData(assetId, assetName, timeframeId);
 
     if (marketApiData.error && (!marketApiData.price && !marketApiData.rsi && !marketApiData.macd)) {
       marketDataError = marketApiData.error;
@@ -163,8 +147,6 @@ async function fetchCombinedDataForAsset(
 export default function HomePage() {
   const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[0]);
-  const [twelveDataApiKey, setTwelveDataApiKey] = useState<string | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState('');
 
   const [aiData, setAiData] = useState<{
     tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -173,53 +155,27 @@ export default function HomePage() {
     technicalIndicatorsData?: any;
     economicIndicatorData?: any;
     marketDataError?: string;
-    apiKeyMissing?: boolean;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [showApiKeyWarning, setShowApiKeyWarning] = useState(true);
 
-  const loadData = useCallback(async (key: string | null, asset: typeof ASSETS[0], timeframe: typeof TIMEFRAMES[0]) => {
+  const loadData = useCallback(async (asset: typeof ASSETS[0], timeframe: typeof TIMEFRAMES[0]) => {
     setIsLoading(true);
     setLastError(null);
-    setAiData(null); // Clear previous data
-    const data = await fetchCombinedDataForAsset(key, asset.id, asset.name, asset.type, timeframe.id);
+    setAiData(null); 
+    const data = await fetchCombinedDataForAsset(asset.id, asset.name, asset.type, timeframe.id);
     setAiData(data);
     if (data.marketDataError) {
         setLastError(data.marketDataError);
-    }
-    if (data.apiKeyMissing) {
-        setLastError('Twelve Data API Key is required to fetch market data.');
     }
     setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    // Attempt to load API key from localStorage on initial mount
-    const storedKey = localStorage.getItem('twelveDataApiKey');
-    if (storedKey) {
-      setTwelveDataApiKey(storedKey);
-      setApiKeyInput(storedKey);
-      loadData(storedKey, selectedAsset, selectedTimeframe);
-    } else {
-      // If no key, set initial state to reflect that data can't be loaded
-      setIsLoading(false);
-      setAiData({
-        tradeRecommendation: { recommendation: 'HOLD', reason: 'API key missing.', error: 'API key missing.' },
-        newsSentiment: { overallSentiment: 'Unknown', summary: 'API key missing.', error: 'API key missing.' },
-        apiKeyMissing: true,
-      });
-       setLastError('Twelve Data API Key is required. Please enter it below.');
-    }
+    loadData(selectedAsset, selectedTimeframe);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only on mount to load from localStorage
-
-  useEffect(() => {
-    if (twelveDataApiKey) {
-      loadData(twelveDataApiKey, selectedAsset, selectedTimeframe);
-    }
-  }, [selectedAsset, selectedTimeframe, twelveDataApiKey, loadData]);
+  }, [selectedAsset, selectedTimeframe]); // Removed loadData from deps as it's stable
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
@@ -235,29 +191,14 @@ export default function HomePage() {
   };
 
   const handleRefresh = async () => {
-      if (!twelveDataApiKey) {
-        setLastError("Please enter your Twelve Data API Key to refresh.");
-        return;
-      }
       setIsRefreshing(true);
       setLastError(null);
-      const data = await fetchCombinedDataForAsset(twelveDataApiKey, selectedAsset.id, selectedAsset.name, selectedAsset.type, selectedTimeframe.id);
+      const data = await fetchCombinedDataForAsset(selectedAsset.id, selectedAsset.name, selectedAsset.type, selectedTimeframe.id);
       setAiData(data);
       if (data.marketDataError) {
         setLastError(data.marketDataError);
       }
       setIsRefreshing(false);
-  };
-
-  const handleApiKeySubmit = () => {
-    if (apiKeyInput.trim()) {
-      setTwelveDataApiKey(apiKeyInput.trim());
-      localStorage.setItem('twelveDataApiKey', apiKeyInput.trim()); // Save to localStorage
-      setShowApiKeyWarning(false); // Hide warning after first successful submission
-      // Data will be reloaded by the useEffect watching twelveDataApiKey
-    } else {
-      setLastError("API Key cannot be empty.");
-    }
   };
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
@@ -266,39 +207,6 @@ export default function HomePage() {
     <div className="flex flex-col min-h-screen bg-background">
       <Header />
       <main className="flex-grow container mx-auto p-4 md:p-8">
-        {showApiKeyWarning && (
-            <Alert variant="default" className="mb-6 bg-yellow-500/10 border-yellow-500/50 text-yellow-700 dark:text-yellow-400">
-                <Info className="h-5 w-5 !text-yellow-600 dark:!text-yellow-400" />
-                <AlertTitle className="font-semibold">Security Notice & API Key</AlertTitle>
-                <AlertDescription className="text-sm">
-                    For demonstration purposes, you can enter your Twelve Data API key below.
-                    Please be aware that entering API keys directly into the browser is not secure for production applications.
-                    Your key will be stored in your browser&apos;s local storage for convenience during this session.
-                </AlertDescription>
-            </Alert>
-        )}
-
-        <div className="mb-6 p-4 border rounded-lg shadow-sm bg-card">
-          <Label htmlFor="apiKey" className="text-lg font-semibold text-foreground flex items-center gap-2 mb-2">
-            <KeyRound size={20} /> Twelve Data API Key:
-          </Label>
-          <div className="flex gap-2 items-center">
-            <Input
-              id="apiKey"
-              type="password"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder="Enter your Twelve Data API Key"
-              className="flex-grow"
-            />
-            <Button onClick={handleApiKeySubmit} size="sm">Set Key</Button>
-          </div>
-           {!twelveDataApiKey && !apiKeyInput && (
-             <p className="text-xs text-destructive mt-1">API Key is required to fetch live market data.</p>
-           )}
-        </div>
-
-
         <div className="flex flex-col gap-4 mb-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-lg font-semibold text-foreground">Select Asset:</h2>
@@ -309,7 +217,7 @@ export default function HomePage() {
                   variant={selectedAsset.id === asset.id ? "default" : "outline"}
                   onClick={() => handleAssetChange(asset)}
                   size="sm"
-                  disabled={!twelveDataApiKey || isLoading || isRefreshing}
+                  disabled={isLoading || isRefreshing}
                 >
                   {asset.name}
                 </Button>
@@ -325,14 +233,14 @@ export default function HomePage() {
                   variant={selectedTimeframe.id === tf.id ? "default" : "outline"}
                   onClick={() => handleTimeframeChange(tf)}
                   size="sm"
-                  disabled={!twelveDataApiKey || isLoading || isRefreshing}
+                  disabled={isLoading || isRefreshing}
                 >
                   {tf.name}
                 </Button>
               ))}
             </div>
           </div>
-          <Button onClick={handleRefresh} disabled={!twelveDataApiKey || isRefreshing || isLoading} className="self-end" size="sm">
+          <Button onClick={handleRefresh} disabled={isRefreshing || isLoading} className="self-end" size="sm">
             {isRefreshing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -348,16 +256,12 @@ export default function HomePage() {
             <div>
                 <p className="font-semibold">Notice:</p>
                 <p className="text-sm">{lastError}</p>
-                 {aiData?.apiKeyMissing ? (
-                    <p className="text-xs mt-1">Please enter your API key above to load data.</p>
-                 ) : (
-                    <p className="text-xs mt-1">Some data might be unavailable or outdated. AI analysis may be affected.</p>
-                 )}
+                <p className="text-xs mt-1">Some data might be unavailable or outdated. AI analysis may be affected.</p>
             </div>
           </div>
         )}
 
-        {(isLoading && twelveDataApiKey) ? (
+        {isLoading ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">{renderCardSkeleton("h-[300px]")}</div>
             <div className="lg:row-span-1">{renderCardSkeleton("h-[250px]")}</div>
@@ -365,34 +269,34 @@ export default function HomePage() {
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
           </div>
-        ) : aiData && !aiData.apiKeyMissing ? (
+        ) : aiData ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={!aiData?.tradeRecommendation && !aiData?.marketDataError && !aiData?.apiKeyMissing} />
+              <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={!aiData?.tradeRecommendation && !aiData?.marketDataError} />
             </div>
             <div className="lg:row-span-1">
               <MarketOverviewCard
                 initialData={aiData?.marketOverviewData}
-                key={`${selectedAsset.id}-${selectedTimeframe.id}-market-${twelveDataApiKey ? 'loaded' : 'no-key'}`}
+                key={`${selectedAsset.id}-${selectedTimeframe.id}-market`}
               />
             </div>
             <div className="lg:col-span-1">
               <TechnicalIndicatorsCard
                 initialData={aiData?.technicalIndicatorsData}
-                key={`${selectedAsset.id}-${selectedTimeframe.id}-tech-${twelveDataApiKey ? 'loaded' : 'no-key'}`}
+                key={`${selectedAsset.id}-${selectedTimeframe.id}-tech`}
               />
             </div>
             <div className="lg:col-span-1">
               <SentimentAnalysisCard
                 data={aiData?.newsSentiment}
-                isLoading={!aiData?.newsSentiment && !aiData?.marketDataError && !aiData?.apiKeyMissing}
+                isLoading={!aiData?.newsSentiment && !aiData?.marketDataError}
                 currencyPair={selectedAsset.name}
               />
             </div>
             <div className="lg:col-span-1">
               <EconomicIndicatorCard
                 initialData={aiData?.economicIndicatorData}
-                 key={`${selectedAsset.id}-${selectedTimeframe.id}-econ-${twelveDataApiKey ? 'loaded' : 'no-key'}`}
+                 key={`${selectedAsset.id}-${selectedTimeframe.id}-econ`}
               />
             </div>
           </div>
@@ -400,7 +304,7 @@ export default function HomePage() {
              <div className="text-center py-10">
                 <Info size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
-                    { twelveDataApiKey ? "Select an asset and timeframe to load data." : "Please enter your Twelve Data API Key above to begin."}
+                    Select an asset and timeframe to begin or try refreshing.
                 </p>
             </div>
         )}
