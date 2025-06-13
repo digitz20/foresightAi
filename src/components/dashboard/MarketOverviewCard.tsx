@@ -1,24 +1,25 @@
 
 'use client';
 
-import { DollarSign } from 'lucide-react';
+import { DollarSign, AlertTriangle } from 'lucide-react';
 import DashboardCard from './DashboardCard';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
 
 type MarketOverviewData = {
   pair: string;
-  value: number;
+  value?: number; // Value can be undefined if API fails
   change: string;
   isPositive: boolean;
   timeframe: string; 
+  error?: string; // To display API errors
 };
 
 const defaultData: MarketOverviewData = {
   pair: 'EUR/USD',
-  value: 1.0853,
-  change: '+0.0012 (0.11%)',
-  isPositive: true,
+  value: undefined,
+  change: 'N/A',
+  isPositive: false,
   timeframe: '15min',
 };
 
@@ -33,24 +34,42 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     if (initialData) {
       setCurrentPrice(initialData);
     } else {
-      // Fallback if initialData is not provided or becomes undefined
       setCurrentPrice(prev => ({ ...defaultData, pair: prev?.pair || defaultData.pair, timeframe: prev?.timeframe || defaultData.timeframe }));
     }
   }, [initialData]);
+
+  const formatPrice = (value: number | undefined, pair: string) => {
+    if (value === undefined || value === null || isNaN(value)) return 'N/A';
+    const isJpyPair = pair.includes("JPY");
+    const isCrypto = pair.includes("BTC") || pair.includes("ETH"); // Assuming common crypto
+    const isXauXagCl = pair.includes("XAU") || pair.includes("XAG") || pair.includes("CL");
+
+    if (isJpyPair || isXauXagCl || isCrypto) { // JPY pairs, Gold, Silver, Oil, Bitcoin usually have 2 decimal places for price
+      return value.toFixed(2);
+    }
+    return value.toFixed(4); // Most other FX pairs
+  }
 
   return (
     <DashboardCard title="Market Overview" icon={DollarSign}>
       <div className="space-y-4">
         <div>
           <h3 className="text-lg font-medium text-foreground">{currentPrice.pair}</h3>
-          <p className="text-3xl font-bold text-primary">
-            {currentPrice.pair && currentPrice.value !== undefined ? 
-             currentPrice.value.toFixed(currentPrice.pair.includes("JPY") || currentPrice.pair.includes("XAU") || currentPrice.pair.includes("XAG") || currentPrice.pair.includes("OIL") ? 2 : (currentPrice.pair.includes("BTC") ? 2 : 4)) : 
-             'N/A'}
-          </p>
-          <p className={`text-sm ${currentPrice.isPositive ? 'text-accent' : 'text-destructive'}`}>
-            {currentPrice.change}
-          </p>
+          {currentPrice.error && currentPrice.value === undefined ? (
+            <div className="flex items-center gap-2 text-destructive mt-1">
+              <AlertTriangle size={20} />
+              <p className="text-sm">Price unavailable: <span className="text-xs">{currentPrice.error.length > 50 ? currentPrice.error.substring(0,50) + '...' : currentPrice.error }</span></p>
+            </div>
+          ) : (
+            <>
+              <p className="text-3xl font-bold text-primary">
+                {formatPrice(currentPrice.value, currentPrice.pair)}
+              </p>
+              <p className={`text-sm ${currentPrice.isPositive ? 'text-accent' : 'text-destructive'}`}>
+                {currentPrice.change}
+              </p>
+            </>
+          )}
         </div>
         <div className="mt-4">
           <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend ({currentPrice.timeframe || 'N/A'})</h4>
@@ -64,7 +83,7 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
               data-ai-hint="stock chart"
             />
           </div>
-          <p className="text-xs text-center text-muted-foreground mt-1">Placeholder chart</p>
+          <p className="text-xs text-center text-muted-foreground mt-1">Placeholder chart. Real data from Twelve Data.</p>
         </div>
       </div>
     </DashboardCard>
