@@ -7,6 +7,8 @@ import SignalDisplayCard from '@/components/dashboard/SignalDisplayCard';
 import MarketOverviewCard from '@/components/dashboard/MarketOverviewCard';
 import TechnicalIndicatorsCard, { 
     type TechnicalIndicatorsData as ProcessedTechnicalIndicatorsData,
+    type RsiData,
+    type MacdData,
 } from '@/components/dashboard/TechnicalIndicatorsCard';
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard, { type EconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
@@ -22,14 +24,14 @@ import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData, EconomicData as FetchedEconomicData } from '@/app/actions/fetch-economic-data';
 
 const ASSETS = [
-  { id: "EUR/USD", name: "EUR/USD", type: "currency" },
-  { id: "GBP/JPY", name: "GBP/JPY", type: "currency" },
-  { id: "AUD/USD", name: "AUD/USD", type: "currency" },
-  { id: "USD/CAD", name: "USD/CAD", type: "currency" },
-  { id: "XAU/USD", name: "Gold (Spot)", type: "commodity" },
-  { id: "XAG/USD", name: "Silver (Spot)", type: "commodity" },
-  { id: "CL", name: "Crude Oil (WTI Futures)", type: "commodity" },
-  { id: "BTC/USD", name: "Bitcoin (BTC/USD)", type: "crypto" },
+  { id: "OANDA:EUR_USD", name: "EUR/USD", type: "currency" },
+  { id: "OANDA:GBP_JPY", name: "GBP/JPY", type: "currency" },
+  { id: "OANDA:AUD_USD", name: "AUD/USD", type: "currency" },
+  { id: "OANDA:USD_CAD", name: "USD/CAD", type: "currency" },
+  { id: "OANDA:XAU_USD", name: "Gold (Spot)", type: "commodity" },
+  { id: "OANDA:XAG_USD", name: "Silver (Spot)", type: "commodity" },
+  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" }, // USO is an ETF that tracks oil, simpler for Finnhub quotes
+  { id: "BINANCE:BTCUSDT", name: "Bitcoin (BTC/USDT)", type: "crypto" },
 ];
 
 const TIMEFRAMES = [
@@ -39,8 +41,9 @@ const TIMEFRAMES = [
   { id: "1D", name: "1D" },
 ];
 
-const DEFAULT_TWELVE_DATA_KEY = '3a10512308b24fbb880b7a137f824a4d';
+const DEFAULT_FINNHUB_KEY = 'd167e09r01qvtdbgqdfgd167e09r01qvtdbgqdg0';
 const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
+
 
 const getRsiStatus = (rsiValue?: number): string => {
   if (rsiValue === undefined || rsiValue === null || isNaN(rsiValue)) return 'N/A';
@@ -54,19 +57,23 @@ const getMacdStatus = (macdData?: { value?: number; signal?: number; histogram?:
       macdData.signal === undefined || macdData.signal === null || isNaN(macdData.signal)) {
     return 'N/A';
   }
-  if (macdData.histogram !== undefined && macdData.histogram > 0.00001) return 'Uptrend';
-  if (macdData.histogram !== undefined && macdData.histogram < -0.00001) return 'Downtrend';
+  // Finnhub MACD histogram is often very small, check its sign relative to a small epsilon
+  const epsilon = 0.0000001; 
+  if (macdData.histogram !== undefined && macdData.histogram > epsilon) return 'Uptrend';
+  if (macdData.histogram !== undefined && macdData.histogram < -epsilon) return 'Downtrend';
+  // Fallback to value vs signal if histogram is effectively zero
   if (macdData.value > macdData.signal) return 'Uptrend';
   if (macdData.value < macdData.signal) return 'Downtrend';
   return 'Neutral';
 };
+
 
 async function fetchCombinedDataForAsset(
   assetId: string,
   assetName: string,
   assetType: string,
   timeframeId: string,
-  twelveDataApiKey: string | null,
+  finnhubApiKey: string | null,
   openExchangeRatesApiKey: string | null,
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -79,7 +86,7 @@ async function fetchCombinedDataForAsset(
   let combinedError: string | undefined;
 
   try {
-    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, twelveDataApiKey);
+    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, finnhubApiKey);
     const economicApiDataPromise = fetchEconomicData(assetId, assetName, openExchangeRatesApiKey);
 
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
@@ -87,30 +94,31 @@ async function fetchCombinedDataForAsset(
     let dataErrors: string[] = [];
 
     if (marketApiData.error) {
-      // Error logging for critical market data failure is handled by fetchMarketData action
       dataErrors.push(`Market Data: ${marketApiData.error}`);
     }
 
     if (economicApiData.error) {
-      console.warn(`Economic data error for ${assetName}: ${economicApiData.error}`);
       dataErrors.push(`Economic Data: ${economicApiData.error}`);
     }
     
     if (dataErrors.length > 0) {
         combinedError = dataErrors.join('; ');
     }
+    
+    const rsi: RsiData = {
+      value: marketApiData.rsi,
+      status: getRsiStatus(marketApiData.rsi),
+    };
+    const macd: MacdData = {
+      value: marketApiData.macd?.value,
+      signal: marketApiData.macd?.signal,
+      histogram: marketApiData.macd?.histogram,
+      status: getMacdStatus(marketApiData.macd),
+    };
 
     const processedTechIndicators: ProcessedTechnicalIndicatorsData = {
-      rsi: {
-        value: marketApiData.rsi,
-        status: getRsiStatus(marketApiData.rsi),
-      },
-      macd: {
-        value: marketApiData.macd?.value,
-        signal: marketApiData.macd?.signal,
-        histogram: marketApiData.macd?.histogram,
-        status: getMacdStatus(marketApiData.macd),
-      },
+      rsi,
+      macd,
       error: marketApiData.error && (!marketApiData.rsi && !marketApiData.macd) ? marketApiData.error : undefined,
     };
     
@@ -132,7 +140,7 @@ async function fetchCombinedDataForAsset(
         };
     }
 
-    const currentPrice = marketApiData.price ?? (assetType === 'crypto' ? 60000 : assetType === 'commodity' ? (assetId.includes("XAU") ? 2300 : (assetId.includes("XAG") ? 25 : (assetId.includes("CL") ? 75 : 100) )) : 1.1);
+    const currentPrice = marketApiData.price ?? (assetType === 'crypto' ? 60000 : assetType === 'commodity' ? (assetId.includes("XAU") ? 2300 : (assetId.includes("XAG") ? 25 : (assetId.includes("USO") ? 75 : 100) )) : 1.1);
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
@@ -144,15 +152,15 @@ async function fetchCombinedDataForAsset(
         `Volatility expected for ${assetType}s amid global economic shifts.`,
         `${assetName} price movements influenced by recent ${timeframeId} trends.`
       ];
-    if (assetId === "EUR/USD") newsHeadlines.push("ECB policy decisions in focus.");
-    if (assetId === "BTC/USD") newsHeadlines.push("Crypto market sentiment shifts rapidly.");
+    if (assetId.includes("EUR_USD")) newsHeadlines.push("ECB policy decisions in focus.");
+    if (assetId.includes("BTC")) newsHeadlines.push("Crypto market sentiment shifts rapidly.");
 
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
       macd: parseFloat(macdValue.toFixed(4)),
       sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), 
       interestRate: interestRateForAI, 
-      price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("CL") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
+      price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("USO") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
     };
 
     const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: assetName, newsHeadlines };
@@ -218,22 +226,22 @@ export default function HomePage() {
   const [lastError, setLastError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const [twelveDataApiKey, setTwelveDataApiKey] = useState<string | null>(null);
+  const [finnhubApiKey, setFinnhubApiKey] = useState<string | null>(null);
   const [openExchangeRatesApiKey, setOpenExchangeRatesApiKey] = useState<string | null>(null);
-  const [tempTwelveDataKey, setTempTwelveDataKey] = useState('');
+  const [tempFinnhubKey, setTempFinnhubKey] = useState('');
   const [tempOpenExchangeRatesKey, setTempOpenExchangeRatesKey] = useState('');
-  const [showTwelveDataKey, setShowTwelveDataKey] = useState(false);
+  const [showFinnhubKey, setShowFinnhubKey] = useState(false);
   const [showOpenExchangeRatesKey, setShowOpenExchangeRatesKey] = useState(false);
 
 
   useEffect(() => {
-    let keyToUseForTwelveData = localStorage.getItem('twelveDataApiKey');
-    if (!keyToUseForTwelveData) {
-      keyToUseForTwelveData = DEFAULT_TWELVE_DATA_KEY;
-      localStorage.setItem('twelveDataApiKey', keyToUseForTwelveData);
+    let keyToUseForFinnhub = localStorage.getItem('finnhubApiKey');
+    if (!keyToUseForFinnhub) {
+      keyToUseForFinnhub = DEFAULT_FINNHUB_KEY;
+      localStorage.setItem('finnhubApiKey', keyToUseForFinnhub);
     }
-    setTwelveDataApiKey(keyToUseForTwelveData);
-    setTempTwelveDataKey(keyToUseForTwelveData);
+    setFinnhubApiKey(keyToUseForFinnhub);
+    setTempFinnhubKey(keyToUseForFinnhub);
 
     let keyToUseForOpenExchange = localStorage.getItem('openExchangeRatesApiKey');
     if (!keyToUseForOpenExchange) {
@@ -243,20 +251,20 @@ export default function HomePage() {
     setOpenExchangeRatesApiKey(keyToUseForOpenExchange);
     setTempOpenExchangeRatesKey(keyToUseForOpenExchange);
     
-    setIsLoading(false); // Initial key setup done
+    setIsLoading(false); 
   }, []);
 
 
-  const handleSetTwelveDataKey = () => {
-    if (tempTwelveDataKey.trim()) {
-      setTwelveDataApiKey(tempTwelveDataKey.trim());
-      localStorage.setItem('twelveDataApiKey', tempTwelveDataKey.trim());
-      toast({ title: "Twelve Data API Key Set", description: "Market data fetching enabled." });
+  const handleSetFinnhubKey = () => {
+    if (tempFinnhubKey.trim()) {
+      setFinnhubApiKey(tempFinnhubKey.trim());
+      localStorage.setItem('finnhubApiKey', tempFinnhubKey.trim());
+      toast({ title: "Finnhub API Key Set", description: "Market data fetching enabled." });
       if (openExchangeRatesApiKey) {
-        loadData(selectedAsset, selectedTimeframe, tempTwelveDataKey.trim(), openExchangeRatesApiKey);
+        loadData(selectedAsset, selectedTimeframe, tempFinnhubKey.trim(), openExchangeRatesApiKey);
       }
     } else {
-      toast({ title: "API Key Empty", description: "Please enter a valid Twelve Data API key.", variant: "destructive" });
+      toast({ title: "API Key Empty", description: "Please enter a valid Finnhub API key.", variant: "destructive" });
     }
   };
 
@@ -265,8 +273,8 @@ export default function HomePage() {
       setOpenExchangeRatesApiKey(tempOpenExchangeRatesKey.trim());
       localStorage.setItem('openExchangeRatesApiKey', tempOpenExchangeRatesKey.trim());
       toast({ title: "Open Exchange Rates API Key Set", description: "Economic data fetching enabled." });
-      if (twelveDataApiKey) {
-         loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, tempOpenExchangeRatesKey.trim());
+      if (finnhubApiKey) {
+         loadData(selectedAsset, selectedTimeframe, finnhubApiKey, tempOpenExchangeRatesKey.trim());
       }
     } else {
       toast({ title: "API Key Empty", description: "Please enter a valid Open Exchange Rates API key.", variant: "destructive" });
@@ -277,13 +285,13 @@ export default function HomePage() {
   const loadData = useCallback(async (
       asset: typeof ASSETS[0], 
       timeframe: typeof TIMEFRAMES[0],
-      currentTwelveDataKey: string | null,
+      currentFinnhubKey: string | null,
       currentOpenExchangeRatesKey: string | null
     ) => {
-    if (!currentTwelveDataKey || !currentOpenExchangeRatesKey) {
+    if (!currentFinnhubKey || !currentOpenExchangeRatesKey) {
       setLastError("One or more API keys are not set. Please set both API keys to fetch all data.");
-      setIsLoading(false); // Make sure loading is false if keys are missing
-      setAiData(null); // Clear previous data
+      setIsLoading(false); 
+      setAiData(null); 
       return;
     }
     setIsLoading(true);
@@ -294,7 +302,7 @@ export default function HomePage() {
         asset.name, 
         asset.type, 
         timeframe.id,
-        currentTwelveDataKey,
+        currentFinnhubKey,
         currentOpenExchangeRatesKey
     );
     setAiData(data);
@@ -316,21 +324,20 @@ export default function HomePage() {
   }, []); 
 
   useEffect(() => {
-    if (twelveDataApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
-      // Check if aiData is null, implying initial load or keys just became available
+    if (finnhubApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
       if (!aiData) {
-         loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, openExchangeRatesApiKey);
+         loadData(selectedAsset, selectedTimeframe, finnhubApiKey, openExchangeRatesApiKey);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [twelveDataApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
+  }, [finnhubApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
     if (asset.id !== selectedAsset.id) {
       setSelectedAsset(asset);
-      if (twelveDataApiKey && openExchangeRatesApiKey) {
-        loadData(asset, selectedTimeframe, twelveDataApiKey, openExchangeRatesApiKey);
+      if (finnhubApiKey && openExchangeRatesApiKey) {
+        loadData(asset, selectedTimeframe, finnhubApiKey, openExchangeRatesApiKey);
       }
     }
   };
@@ -338,14 +345,14 @@ export default function HomePage() {
   const handleTimeframeChange = (timeframe: typeof TIMEFRAMES[0]) => {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
-       if (twelveDataApiKey && openExchangeRatesApiKey) {
-        loadData(selectedAsset, timeframe, twelveDataApiKey, openExchangeRatesApiKey);
+       if (finnhubApiKey && openExchangeRatesApiKey) {
+        loadData(selectedAsset, timeframe, finnhubApiKey, openExchangeRatesApiKey);
       }
     }
   };
 
   const handleRefresh = async () => {
-    if (!twelveDataApiKey || !openExchangeRatesApiKey) {
+    if (!finnhubApiKey || !openExchangeRatesApiKey) {
       toast({ title: "API Keys Required", description: "Please set both API keys before refreshing.", variant: "destructive" });
       return;
     }
@@ -356,7 +363,7 @@ export default function HomePage() {
           selectedAsset.name, 
           selectedAsset.type, 
           selectedTimeframe.id,
-          twelveDataApiKey,
+          finnhubApiKey,
           openExchangeRatesApiKey
         );
       setAiData(data);
@@ -379,8 +386,8 @@ export default function HomePage() {
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
-  const isDataFetchingDisabled = isLoading || isRefreshing || !twelveDataApiKey || !openExchangeRatesApiKey;
-  const isKeySetupPhase = !twelveDataApiKey || !openExchangeRatesApiKey;
+  const isDataFetchingDisabled = isLoading || isRefreshing || !finnhubApiKey || !openExchangeRatesApiKey;
+  const isKeySetupPhase = !finnhubApiKey || !openExchangeRatesApiKey;
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -389,20 +396,20 @@ export default function HomePage() {
         <div className="mb-6 p-4 border border-border rounded-lg bg-card shadow-md space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                    <label htmlFor="twelveDataKeyInput" className="block text-sm font-medium text-foreground mb-1">Twelve Data API Key:</label>
+                    <label htmlFor="finnhubKeyInput" className="block text-sm font-medium text-foreground mb-1">Finnhub API Key:</label>
                     <div className="flex gap-2 items-center">
                         <Input 
-                            id="twelveDataKeyInput"
-                            type={showTwelveDataKey ? "text" : "password"}
-                            value={tempTwelveDataKey} 
-                            onChange={(e) => setTempTwelveDataKey(e.target.value)}
-                            placeholder="Enter Twelve Data API Key"
+                            id="finnhubKeyInput"
+                            type={showFinnhubKey ? "text" : "password"}
+                            value={tempFinnhubKey} 
+                            onChange={(e) => setTempFinnhubKey(e.target.value)}
+                            placeholder="Enter Finnhub API Key"
                             className="flex-grow"
                         />
-                        <Button variant="ghost" size="icon" onClick={() => setShowTwelveDataKey(!showTwelveDataKey)} aria-label={showTwelveDataKey ? "Hide API key" : "Show API key"}>
-                            {showTwelveDataKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        <Button variant="ghost" size="icon" onClick={() => setShowFinnhubKey(!showFinnhubKey)} aria-label={showFinnhubKey ? "Hide API key" : "Show API key"}>
+                            {showFinnhubKey ? <EyeOff size={16} /> : <Eye size={16} />}
                         </Button>
-                        <Button onClick={handleSetTwelveDataKey} size="sm"><KeyRound size={16} /> Set</Button>
+                        <Button onClick={handleSetFinnhubKey} size="sm"><KeyRound size={16} /> Set</Button>
                     </div>
                 </div>
                 <div>
@@ -483,7 +490,7 @@ export default function HomePage() {
           </div>
         )}
         
-        {isKeySetupPhase && !isLoading && ( // This condition means keys are not set, and we are not in initial load from useEffect
+        {isKeySetupPhase && !isLoading && ( 
             <div className="text-center py-10">
                 <KeyRound size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
@@ -545,7 +552,7 @@ export default function HomePage() {
         ) : null}
       </main>
       <footer className="text-center p-4 text-sm text-muted-foreground border-t border-border/50">
-        Market data from <a href="https://twelvedata.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Twelve Data</a>.
+        Market data from <a href="https://finnhub.io" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">Finnhub.io</a>.
         Exchange rate data from <a href="https://openexchangerates.org" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">OpenExchangeRates.org</a>.
         © {new Date().getFullYear()} ForeSight AI. All rights reserved.
       </footer>
@@ -553,3 +560,4 @@ export default function HomePage() {
   );
 }
 
+    
