@@ -30,7 +30,7 @@ const ASSETS = [
   { id: "OANDA:USD_CAD", name: "USD/CAD", type: "currency" },
   { id: "OANDA:XAU_USD", name: "Gold (Spot)", type: "commodity" },
   { id: "OANDA:XAG_USD", name: "Silver (Spot)", type: "commodity" },
-  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" }, // USO is an ETF that tracks oil, simpler for Finnhub quotes
+  { id: "USO", name: "Crude Oil (USO ETF)", type: "commodity" },
   { id: "BINANCE:BTCUSDT", name: "Bitcoin (BTC/USDT)", type: "crypto" },
 ];
 
@@ -57,11 +57,9 @@ const getMacdStatus = (macdData?: { value?: number; signal?: number; histogram?:
       macdData.signal === undefined || macdData.signal === null || isNaN(macdData.signal)) {
     return 'N/A';
   }
-  // Finnhub MACD histogram is often very small, check its sign relative to a small epsilon
   const epsilon = 0.0000001; 
   if (macdData.histogram !== undefined && macdData.histogram > epsilon) return 'Uptrend';
   if (macdData.histogram !== undefined && macdData.histogram < -epsilon) return 'Downtrend';
-  // Fallback to value vs signal if histogram is effectively zero
   if (macdData.value > macdData.signal) return 'Uptrend';
   if (macdData.value < macdData.signal) return 'Downtrend';
   return 'Neutral';
@@ -559,5 +557,7 @@ export default function HomePage() {
     </div>
   );
 }
+
+    
 
     
