@@ -11,6 +11,7 @@ type MarketOverviewData = {
   value: number;
   change: string;
   isPositive: boolean;
+  timeframe: string; 
 };
 
 const defaultData: MarketOverviewData = {
@@ -18,6 +19,7 @@ const defaultData: MarketOverviewData = {
   value: 1.0853,
   change: '+0.0012 (0.11%)',
   isPositive: true,
+  timeframe: '15min',
 };
 
 type MarketOverviewCardProps = {
@@ -31,7 +33,8 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     if (initialData) {
       setCurrentPrice(initialData);
     } else {
-      setCurrentPrice(defaultData); // Fallback if initialData becomes undefined
+      // Fallback if initialData is not provided or becomes undefined
+      setCurrentPrice(prev => ({ ...defaultData, pair: prev?.pair || defaultData.pair, timeframe: prev?.timeframe || defaultData.timeframe }));
     }
   }, [initialData]);
 
@@ -42,7 +45,7 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
           <h3 className="text-lg font-medium text-foreground">{currentPrice.pair}</h3>
           <p className="text-3xl font-bold text-primary">
             {currentPrice.pair && currentPrice.value !== undefined ? 
-             currentPrice.value.toFixed(currentPrice.pair.includes("JPY") || currentPrice.pair.includes("XAU") ? 2 : 4) : 
+             currentPrice.value.toFixed(currentPrice.pair.includes("JPY") || currentPrice.pair.includes("XAU") || currentPrice.pair.includes("XAG") || currentPrice.pair.includes("OIL") ? 2 : (currentPrice.pair.includes("BTC") ? 2 : 4)) : 
              'N/A'}
           </p>
           <p className={`text-sm ${currentPrice.isPositive ? 'text-accent' : 'text-destructive'}`}>
@@ -50,7 +53,7 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
           </p>
         </div>
         <div className="mt-4">
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend (15min)</h4>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend ({currentPrice.timeframe || 'N/A'})</h4>
           <div className="aspect-[16/9] bg-muted/50 rounded-md overflow-hidden flex items-center justify-center">
             <Image 
               src="https://placehold.co/600x300.png" 
@@ -67,5 +70,3 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
     </DashboardCard>
   );
 }
-
-    
