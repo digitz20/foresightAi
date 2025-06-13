@@ -12,14 +12,14 @@ import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard'
 import EconomicIndicatorCard, { type EconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from "@/hooks/use-toast";
 
 import { generateTradeRecommendation, GenerateTradeRecommendationInput, GenerateTradeRecommendationOutput } from '@/ai/flows/generate-trade-recommendation';
 import { summarizeNewsSentiment, SummarizeNewsSentimentInput, SummarizeNewsSentimentOutput } from '@/ai/flows/summarize-news-sentiment';
 import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
-import { fetchEconomicData, EconomicData as FetchedEconomicData } from '@/app/actions/fetch-economic-data'; // This will now use OpenExchangeRates
+import { fetchEconomicData, EconomicData as FetchedEconomicData } from '@/app/actions/fetch-economic-data';
 
 const ASSETS = [
   { id: "EUR/USD", name: "EUR/USD", type: "currency" },
@@ -38,6 +38,9 @@ const TIMEFRAMES = [
   { id: "4H", name: "4H" },
   { id: "1D", name: "1D" },
 ];
+
+const DEFAULT_TWELVE_DATA_KEY = '3a10512308b24fbb880b7a137f824a4d';
+const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
 
 const getRsiStatus = (rsiValue?: number): string => {
   if (rsiValue === undefined || rsiValue === null || isNaN(rsiValue)) return 'N/A';
@@ -77,16 +80,14 @@ async function fetchCombinedDataForAsset(
 
   try {
     const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, twelveDataApiKey);
-    const economicApiDataPromise = fetchEconomicData(assetId, assetName, openExchangeRatesApiKey); // Uses OpenExchangeRates key now
+    const economicApiDataPromise = fetchEconomicData(assetId, assetName, openExchangeRatesApiKey);
 
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
 
     let dataErrors: string[] = [];
 
     if (marketApiData.error) {
-      if (!marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
-        // This is handled by fetchMarketData's console.warn for specific issues
-      }
+      // Error logging for critical market data failure is handled by fetchMarketData action
       dataErrors.push(`Market Data: ${marketApiData.error}`);
     }
 
@@ -110,7 +111,7 @@ async function fetchCombinedDataForAsset(
         histogram: marketApiData.macd?.histogram,
         status: getMacdStatus(marketApiData.macd),
       },
-      error: marketApiData.error,
+      error: marketApiData.error && (!marketApiData.rsi && !marketApiData.macd) ? marketApiData.error : undefined,
     };
     
     if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
@@ -135,8 +136,6 @@ async function fetchCombinedDataForAsset(
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    // Interest rate for AI flow - this remains a placeholder. 
-    // OpenExchangeRates provides exchange rates, not central bank interest rates.
     const simulatedInterestRate = 0.5 + Math.random() * 2;
     const interestRateForAI = parseFloat(simulatedInterestRate.toFixed(2));
 
@@ -223,28 +222,37 @@ export default function HomePage() {
   const [openExchangeRatesApiKey, setOpenExchangeRatesApiKey] = useState<string | null>(null);
   const [tempTwelveDataKey, setTempTwelveDataKey] = useState('');
   const [tempOpenExchangeRatesKey, setTempOpenExchangeRatesKey] = useState('');
+  const [showTwelveDataKey, setShowTwelveDataKey] = useState(false);
+  const [showOpenExchangeRatesKey, setShowOpenExchangeRatesKey] = useState(false);
+
 
   useEffect(() => {
-    const storedTwelveDataKey = localStorage.getItem('twelveDataApiKey');
-    if (storedTwelveDataKey) {
-      setTwelveDataApiKey(storedTwelveDataKey);
-      setTempTwelveDataKey(storedTwelveDataKey);
+    let keyToUseForTwelveData = localStorage.getItem('twelveDataApiKey');
+    if (!keyToUseForTwelveData) {
+      keyToUseForTwelveData = DEFAULT_TWELVE_DATA_KEY;
+      localStorage.setItem('twelveDataApiKey', keyToUseForTwelveData);
     }
-    const storedOpenExchangeRatesKey = localStorage.getItem('openExchangeRatesApiKey');
-    if (storedOpenExchangeRatesKey) {
-      setOpenExchangeRatesApiKey(storedOpenExchangeRatesKey);
-      setTempOpenExchangeRatesKey(storedOpenExchangeRatesKey);
+    setTwelveDataApiKey(keyToUseForTwelveData);
+    setTempTwelveDataKey(keyToUseForTwelveData);
+
+    let keyToUseForOpenExchange = localStorage.getItem('openExchangeRatesApiKey');
+    if (!keyToUseForOpenExchange) {
+      keyToUseForOpenExchange = DEFAULT_OPEN_EXCHANGE_RATES_KEY;
+      localStorage.setItem('openExchangeRatesApiKey', keyToUseForOpenExchange);
     }
-    setIsLoading(false); // Initial key load done, allow data fetching to proceed if keys exist
+    setOpenExchangeRatesApiKey(keyToUseForOpenExchange);
+    setTempOpenExchangeRatesKey(keyToUseForOpenExchange);
+    
+    setIsLoading(false); // Initial key setup done
   }, []);
+
 
   const handleSetTwelveDataKey = () => {
     if (tempTwelveDataKey.trim()) {
       setTwelveDataApiKey(tempTwelveDataKey.trim());
       localStorage.setItem('twelveDataApiKey', tempTwelveDataKey.trim());
       toast({ title: "Twelve Data API Key Set", description: "Market data fetching enabled." });
-      // Trigger data load if other key is also set or not required for initial fetch
-      if (openExchangeRatesApiKey || !tempOpenExchangeRatesKey) { // Or some other logic if econ data isn't critical path
+      if (openExchangeRatesApiKey) {
         loadData(selectedAsset, selectedTimeframe, tempTwelveDataKey.trim(), openExchangeRatesApiKey);
       }
     } else {
@@ -274,7 +282,7 @@ export default function HomePage() {
     ) => {
     if (!currentTwelveDataKey || !currentOpenExchangeRatesKey) {
       setLastError("One or more API keys are not set. Please set both API keys to fetch all data.");
-      setIsLoading(false);
+      setIsLoading(false); // Make sure loading is false if keys are missing
       setAiData(null); // Clear previous data
       return;
     }
@@ -305,16 +313,17 @@ export default function HomePage() {
         }
     }
     setIsLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Removed API keys from deps as they are passed directly
+  }, []); 
 
   useEffect(() => {
-    // Initial data load if keys are available from local storage
-    if (twelveDataApiKey && openExchangeRatesApiKey && !aiData && !isLoading && !isRefreshing) {
-      loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, openExchangeRatesApiKey);
+    if (twelveDataApiKey && openExchangeRatesApiKey && !isLoading && !isRefreshing) {
+      // Check if aiData is null, implying initial load or keys just became available
+      if (!aiData) {
+         loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, openExchangeRatesApiKey);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [twelveDataApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe]); // Added API keys and selections as deps
+  }, [twelveDataApiKey, openExchangeRatesApiKey, selectedAsset, selectedTimeframe, loadData]);
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
@@ -381,36 +390,42 @@ export default function HomePage() {
             <div className="grid md:grid-cols-2 gap-4">
                 <div>
                     <label htmlFor="twelveDataKeyInput" className="block text-sm font-medium text-foreground mb-1">Twelve Data API Key:</label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                         <Input 
                             id="twelveDataKeyInput"
-                            type="password" 
+                            type={showTwelveDataKey ? "text" : "password"}
                             value={tempTwelveDataKey} 
                             onChange={(e) => setTempTwelveDataKey(e.target.value)}
                             placeholder="Enter Twelve Data API Key"
                             className="flex-grow"
                         />
-                        <Button onClick={handleSetTwelveDataKey} size="sm"><KeyRound size={16} /> Set Key</Button>
+                        <Button variant="ghost" size="icon" onClick={() => setShowTwelveDataKey(!showTwelveDataKey)} aria-label={showTwelveDataKey ? "Hide API key" : "Show API key"}>
+                            {showTwelveDataKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </Button>
+                        <Button onClick={handleSetTwelveDataKey} size="sm"><KeyRound size={16} /> Set</Button>
                     </div>
                 </div>
                 <div>
                     <label htmlFor="openExchangeRatesKeyInput" className="block text-sm font-medium text-foreground mb-1">Open Exchange Rates API Key:</label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                         <Input 
                             id="openExchangeRatesKeyInput"
-                            type="password" 
+                            type={showOpenExchangeRatesKey ? "text" : "password"} 
                             value={tempOpenExchangeRatesKey} 
                             onChange={(e) => setTempOpenExchangeRatesKey(e.target.value)}
                             placeholder="Enter Open Exchange Rates API Key"
                             className="flex-grow"
                         />
-                        <Button onClick={handleSetOpenExchangeRatesKey} size="sm"><KeyRound size={16} /> Set Key</Button>
+                         <Button variant="ghost" size="icon" onClick={() => setShowOpenExchangeRatesKey(!showOpenExchangeRatesKey)} aria-label={showOpenExchangeRatesKey ? "Hide API key" : "Show API key"}>
+                            {showOpenExchangeRatesKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </Button>
+                        <Button onClick={handleSetOpenExchangeRatesKey} size="sm"><KeyRound size={16} /> Set</Button>
                     </div>
                 </div>
             </div>
              <div className="text-xs text-muted-foreground p-2 bg-muted/30 rounded-md mt-2">
                 <AlertTriangle size={14} className="inline mr-1 text-destructive" />
-                API keys are stored in your browser's local storage for convenience. For production, keys should be server-managed. Data fetching is disabled until keys are set.
+                API keys are auto-filled and stored in your browser's local storage for convenience. For production, keys should be server-managed. Data fetching is disabled until keys are set.
             </div>
         </div>
 
@@ -468,14 +483,18 @@ export default function HomePage() {
           </div>
         )}
         
-        {isKeySetupPhase && !isLoading && (
+        {isKeySetupPhase && !isLoading && ( // This condition means keys are not set, and we are not in initial load from useEffect
             <div className="text-center py-10">
                 <KeyRound size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
-                    Please set both API keys above to enable data fetching and AI analysis.
+                    Please set valid API keys above to enable data fetching and AI analysis.
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                    Default keys have been pre-filled. If they are incorrect or restricted, please update them.
                 </p>
             </div>
         )}
+
 
         {isLoading && !isKeySetupPhase ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -488,7 +507,7 @@ export default function HomePage() {
         ) : aiData && !isKeySetupPhase ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={!aiData?.tradeRecommendation && !aiData?.combinedError && !aiData.tradeRecommendation?.error} />
+              <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={isLoading || isRefreshing} />
             </div>
             <div className="lg:row-span-1">
               <MarketOverviewCard
@@ -505,7 +524,7 @@ export default function HomePage() {
             <div className="lg:col-span-1">
               <SentimentAnalysisCard
                 data={aiData?.newsSentiment}
-                isLoading={!aiData?.newsSentiment && !aiData?.combinedError && !aiData.newsSentiment?.error}
+                isLoading={isLoading || isRefreshing}
                 currencyPair={selectedAsset.name}
               />
             </div>
@@ -516,7 +535,7 @@ export default function HomePage() {
               />
             </div>
           </div>
-        ) : !isKeySetupPhase && !isLoading ? ( // No data, not loading, and keys are supposedly set
+        ) : !isKeySetupPhase && !isLoading ? ( 
              <div className="text-center py-10">
                 <Info size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
@@ -533,3 +552,4 @@ export default function HomePage() {
     </div>
   );
 }
+
