@@ -14,11 +14,13 @@ export type TechnicalIndicatorsData = {
   rsi: RsiData;
   macd: MacdData;
   error?: string; // To display API errors for the entire technical indicators block
+  sourceProvider?: 'Polygon.io' | 'Finnhub.io' | 'TwelveData' | 'Unknown'; // Added sourceProvider
 };
 
 const defaultData: TechnicalIndicatorsData = {
   rsi: { value: undefined, status: 'N/A' },
   macd: { value: undefined, signal: undefined, histogram: undefined, status: 'N/A' },
+  sourceProvider: 'Unknown',
 };
 
 type TechnicalIndicatorsCardProps = {
@@ -32,7 +34,6 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
     if (initialData) {
       setIndicators(initialData);
     } else {
-      // This case handles when initialData is explicitly undefined (e.g., during initial load before data is fetched)
       setIndicators(defaultData);
     }
   }, [initialData]);
@@ -51,7 +52,10 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
     return 'text-muted-foreground';
   }
 
-  // Check if there's a general error for technical indicators and no specific data is available.
+  const dataSourceText = indicators.sourceProvider && indicators.sourceProvider !== 'Unknown' 
+    ? `Data from ${indicators.sourceProvider}` 
+    : 'Data source unknown';
+
   if (indicators.error && indicators.rsi.value === undefined && indicators.macd.value === undefined) {
     return (
       <DashboardCard title="Technical Indicators" icon={Activity}>
@@ -59,6 +63,7 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
           <AlertTriangle className="h-8 w-8" />
           <p className="font-semibold text-center">Indicators Unavailable</p>
           <p className="text-sm text-center">{indicators.error.length > 100 ? indicators.error.substring(0,100) + '...' : indicators.error}</p>
+          <p className="text-xs text-muted-foreground mt-1">{dataSourceText}</p>
         </div>
       </DashboardCard>
     );
@@ -89,7 +94,7 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
           ) : (
             <p className="text-sm text-muted-foreground text-center py-2">RSI data unavailable.</p>
           )}
-           <p className="text-xs text-muted-foreground mt-1 text-center">Data from Twelve Data API</p>
+           <p className="text-xs text-muted-foreground mt-1 text-center">{dataSourceText}</p>
         </div>
 
         <div>
@@ -120,9 +125,8 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
           ) : (
              <p className="text-sm text-muted-foreground text-center py-2">MACD data unavailable.</p>
           )}
-          <p className="text-xs text-muted-foreground mt-1 text-center">Data from Twelve Data API</p>
+          <p className="text-xs text-muted-foreground mt-1 text-center">{dataSourceText}</p>
         </div>
-        {/* Display general error for technical indicators if it exists and some data might be partially shown */}
         {indicators.error && (indicators.rsi.value !== undefined || indicators.macd.value !== undefined) && (
              <p className="text-xs text-destructive mt-1 text-center"><AlertTriangle className="inline h-3 w-3 mr-1" />Error: {indicators.error}</p>
         )}

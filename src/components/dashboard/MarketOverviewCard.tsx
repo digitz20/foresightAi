@@ -5,74 +5,78 @@ import { DollarSign, AlertTriangle } from 'lucide-react';
 import DashboardCard from './DashboardCard';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
+import type { MarketData } from '@/app/actions/fetch-market-data'; // Import MarketData type
 
-type MarketOverviewData = {
-  pair: string;
-  value?: number; // Value can be undefined if API fails
-  change: string;
-  isPositive: boolean;
-  timeframe: string; 
-  error?: string; // To display API errors
-};
+// Use MarketData directly as the type for initialData and currentPrice
+// MarketData already includes assetName (pair), value (price), and error, sourceProvider.
+// 'change' and 'isPositive' are not directly provided by the backend, would need calculation or removal.
+// For simplicity, I'll remove 'change' and 'isPositive' for now as they are not in MarketData.
 
-const defaultData: MarketOverviewData = {
-  pair: 'EUR/USD',
-  value: undefined,
-  change: 'N/A',
-  isPositive: false,
-  timeframe: '15min',
+const defaultData: MarketData = {
+  assetName: 'EUR/USD', // This will be overridden by initialData
+  price: undefined,
+  timeframe: '15min', // This will be overridden by initialData
+  sourceProvider: 'Unknown',
 };
 
 type MarketOverviewCardProps = {
-  initialData?: MarketOverviewData;
+  initialData?: MarketData; // Use MarketData type
 };
 
 export default function MarketOverviewCard({ initialData }: MarketOverviewCardProps) {
-  const [currentPrice, setCurrentPrice] = useState<MarketOverviewData>(initialData || defaultData);
+  const [currentMarketData, setCurrentMarketData] = useState<MarketData>(initialData || defaultData);
 
   useEffect(() => {
     if (initialData) {
-      setCurrentPrice(initialData);
+      setCurrentMarketData(initialData);
     } else {
-      setCurrentPrice(prev => ({ ...defaultData, pair: prev?.pair || defaultData.pair, timeframe: prev?.timeframe || defaultData.timeframe }));
+      setCurrentMarketData(prev => ({ 
+        ...defaultData, 
+        assetName: prev?.assetName || defaultData.assetName, 
+        timeframe: prev?.timeframe || defaultData.timeframe,
+        sourceProvider: prev?.sourceProvider || 'Unknown',
+      }));
     }
   }, [initialData]);
 
-  const formatPrice = (value: number | undefined, pair: string) => {
-    if (value === undefined || value === null || isNaN(value)) return 'N/A';
+  const formatPrice = (value: number | undefined, pair: string | undefined) => {
+    if (value === undefined || value === null || isNaN(value) || !pair) return 'N/A';
     const isJpyPair = pair.includes("JPY");
-    const isCrypto = pair.includes("BTC") || pair.includes("ETH"); // Assuming common crypto
-    const isXauXagCl = pair.includes("XAU") || pair.includes("XAG") || pair.includes("CL");
+    const isCrypto = pair.includes("BTC") || pair.includes("ETH"); 
+    const isXauXagCl = pair.includes("XAU") || pair.includes("XAG") || pair.toLowerCase().includes("oil");
 
-    if (isJpyPair || isXauXagCl || isCrypto) { // JPY pairs, Gold, Silver, Oil, Bitcoin usually have 2 decimal places for price
+    if (isJpyPair || isXauXagCl || isCrypto) { 
       return value.toFixed(2);
     }
-    return value.toFixed(4); // Most other FX pairs
+    return value.toFixed(4); 
   }
+
+  const dataSourceText = currentMarketData.sourceProvider && currentMarketData.sourceProvider !== 'Unknown' 
+    ? `Data from ${currentMarketData.sourceProvider}` 
+    : 'Data source unknown';
 
   return (
     <DashboardCard title="Market Overview" icon={DollarSign}>
       <div className="space-y-4">
         <div>
-          <h3 className="text-lg font-medium text-foreground">{currentPrice.pair}</h3>
-          {currentPrice.error && currentPrice.value === undefined ? (
+          <h3 className="text-lg font-medium text-foreground">{currentMarketData.assetName || 'N/A'}</h3>
+          {currentMarketData.error && currentMarketData.price === undefined ? (
             <div className="flex items-center gap-2 text-destructive mt-1">
               <AlertTriangle size={20} />
-              <p className="text-sm">Price unavailable: <span className="text-xs">{currentPrice.error.length > 50 ? currentPrice.error.substring(0,50) + '...' : currentPrice.error }</span></p>
+              <p className="text-sm">Price unavailable: <span className="text-xs">{currentMarketData.error.length > 50 ? currentMarketData.error.substring(0,50) + '...' : currentMarketData.error }</span></p>
             </div>
           ) : (
             <>
               <p className="text-3xl font-bold text-primary">
-                {formatPrice(currentPrice.value, currentPrice.pair)}
+                {formatPrice(currentMarketData.price, currentMarketData.assetName)}
               </p>
-              <p className={`text-sm ${currentPrice.isPositive ? 'text-accent' : 'text-destructive'}`}>
-                {currentPrice.change}
-              </p>
+              {/* Removed change and isPositive as they are not in MarketData */}
             </>
           )}
+           {currentMarketData.price !== undefined && <p className="text-xs text-muted-foreground mt-1">{dataSourceText}</p>}
         </div>
         <div className="mt-4">
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend ({currentPrice.timeframe || 'N/A'})</h4>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Price Trend ({currentMarketData.timeframe || 'N/A'})</h4>
           <div className="aspect-[16/9] bg-muted/50 rounded-md overflow-hidden flex items-center justify-center">
             <Image 
               src="https://placehold.co/600x300.png" 
@@ -83,8 +87,11 @@ export default function MarketOverviewCard({ initialData }: MarketOverviewCardPr
               data-ai-hint="stock chart"
             />
           </div>
-          <p className="text-xs text-center text-muted-foreground mt-1">Placeholder chart. Real data from Twelve Data.</p>
+          <p className="text-xs text-center text-muted-foreground mt-1">Placeholder chart.</p>
         </div>
+         {currentMarketData.error && currentMarketData.price !== undefined && (
+            <p className="text-xs text-destructive mt-1"><AlertTriangle className="inline h-3 w-3 mr-1" />Partial error: {currentMarketData.error}</p>
+        )}
       </div>
     </DashboardCard>
   );
