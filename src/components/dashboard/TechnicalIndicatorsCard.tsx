@@ -7,12 +7,13 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from '@/components/ui/badge';
 import { useEffect, useState } from 'react';
 
-type RsiData = { value?: number; status: string }; // value can be undefined
-type MacdData = { value?: number; signal?: number; histogram?: number; status: string }; // values can be undefined
-type TechnicalIndicatorsData = {
+// Export types for use in page.tsx
+export type RsiData = { value?: number; status: string };
+export type MacdData = { value?: number; signal?: number; histogram?: number; status: string };
+export type TechnicalIndicatorsData = {
   rsi: RsiData;
   macd: MacdData;
-  error?: string; // To display API errors
+  error?: string; // To display API errors for the entire technical indicators block
 };
 
 const defaultData: TechnicalIndicatorsData = {
@@ -31,7 +32,8 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
     if (initialData) {
       setIndicators(initialData);
     } else {
-      setIndicators(defaultData); // Fallback
+      // This case handles when initialData is explicitly undefined (e.g., during initial load before data is fetched)
+      setIndicators(defaultData);
     }
   }, [initialData]);
 
@@ -44,21 +46,26 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
 
   const getMacdStatusColor = (status?: string) => {
     if (!status || status === 'N/A') return 'text-muted-foreground';
-    if (status === 'Uptrend') return 'text-accent';
-    if (status === 'Downtrend') return 'text-destructive';
+    if (status.toLowerCase().includes('uptrend') || status.toLowerCase().includes('bullish')) return 'text-accent';
+    if (status.toLowerCase().includes('downtrend') || status.toLowerCase().includes('bearish')) return 'text-destructive';
     return 'text-muted-foreground';
   }
 
-  return (
-    <DashboardCard title="Technical Indicators" icon={Activity}>
-      {indicators.error && (!indicators.rsi.value && !indicators.macd.value) && (
+  // Check if there's a general error for technical indicators and no specific data is available.
+  if (indicators.error && indicators.rsi.value === undefined && indicators.macd.value === undefined) {
+    return (
+      <DashboardCard title="Technical Indicators" icon={Activity}>
         <div className="flex flex-col items-center justify-center text-destructive p-4 gap-2">
           <AlertTriangle className="h-8 w-8" />
           <p className="font-semibold text-center">Indicators Unavailable</p>
           <p className="text-sm text-center">{indicators.error.length > 100 ? indicators.error.substring(0,100) + '...' : indicators.error}</p>
         </div>
-      )}
-      {(!indicators.error || indicators.rsi.value || indicators.macd.value) && (
+      </DashboardCard>
+    );
+  }
+
+  return (
+    <DashboardCard title="Technical Indicators" icon={Activity}>
       <div className="space-y-6">
         <div>
           <div className="flex justify-between items-center mb-1">
@@ -67,7 +74,7 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
               RSI (Relative Strength Index)
             </h4>
             <Badge variant="outline" className={getRsiStatusColor(indicators.rsi.value)}>
-              {indicators.rsi.value !== undefined ? indicators.rsi.status : 'N/A'}
+              {indicators.rsi.status}
             </Badge>
           </div>
           {indicators.rsi.value !== undefined ? (
@@ -92,7 +99,7 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
               MACD
             </h4>
             <Badge variant="outline" className={getMacdStatusColor(indicators.macd.status)}>
-              {indicators.macd.value !== undefined ? indicators.macd.status : 'N/A'}
+              {indicators.macd.status}
             </Badge>
           </div>
           {indicators.macd.value !== undefined && indicators.macd.signal !== undefined && indicators.macd.histogram !== undefined ? (
@@ -115,8 +122,11 @@ export default function TechnicalIndicatorsCard({ initialData }: TechnicalIndica
           )}
           <p className="text-xs text-muted-foreground mt-1 text-center">Data from Twelve Data API</p>
         </div>
+        {/* Display general error for technical indicators if it exists and some data might be partially shown */}
+        {indicators.error && (indicators.rsi.value !== undefined || indicators.macd.value !== undefined) && (
+             <p className="text-xs text-destructive mt-1 text-center"><AlertTriangle className="inline h-3 w-3 mr-1" />Error: {indicators.error}</p>
+        )}
       </div>
-      )}
     </DashboardCard>
   );
 }

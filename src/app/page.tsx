@@ -5,13 +5,15 @@ import { useState, useEffect, useCallback } from 'react';
 import Header from '@/components/layout/Header';
 import SignalDisplayCard from '@/components/dashboard/SignalDisplayCard';
 import MarketOverviewCard from '@/components/dashboard/MarketOverviewCard';
-import TechnicalIndicatorsCard from '@/components/dashboard/TechnicalIndicatorsCard';
+import TechnicalIndicatorsCard, { 
+    type TechnicalIndicatorsData as ProcessedTechnicalIndicatorsData,
+    type RsiData as ProcessedRsiData,
+    type MacdData as ProcessedMacdData
+} from '@/components/dashboard/TechnicalIndicatorsCard';
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard, { type EconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, TriangleAlert } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { generateTradeRecommendation, GenerateTradeRecommendationInput, GenerateTradeRecommendationOutput } from '@/ai/flows/generate-trade-recommendation';
@@ -37,87 +39,97 @@ const TIMEFRAMES = [
   { id: "1D", name: "1D" },
 ];
 
+// Helper function to determine RSI status
+const getRsiStatus = (rsiValue?: number): string => {
+  if (rsiValue === undefined || rsiValue === null || isNaN(rsiValue)) return 'N/A';
+  if (rsiValue < 30) return 'Oversold';
+  if (rsiValue > 70) return 'Overbought';
+  return 'Neutral';
+};
+
+// Helper function to determine MACD status
+const getMacdStatus = (macdData?: { value?: number; signal?: number; histogram?: number }): string => {
+  if (!macdData || macdData.value === undefined || macdData.value === null || isNaN(macdData.value) ||
+      macdData.signal === undefined || macdData.signal === null || isNaN(macdData.signal)) {
+    return 'N/A';
+  }
+  // Simplified logic: Positive histogram or MACD line above signal often suggests bullish.
+  // Using histogram is often more direct for simple status.
+  if (macdData.histogram !== undefined && macdData.histogram > 0.00001) return 'Uptrend'; // Adjusted threshold
+  if (macdData.histogram !== undefined && macdData.histogram < -0.00001) return 'Downtrend'; // Adjusted threshold
+  if (macdData.value > macdData.signal) return 'Uptrend';
+  if (macdData.value < macdData.signal) return 'Downtrend';
+  return 'Neutral';
+};
+
+
 // Combine all data fetching and processing
 async function fetchCombinedDataForAsset(
   assetId: string,
   assetName: string,
   assetType: string,
   timeframeId: string,
-  twelveDataApiKey: string | null,
-  exchangeRateApiKey: string | null
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
   newsSentiment: SummarizeNewsSentimentOutput | null;
-  marketOverviewData?: MarketData;
-  technicalIndicatorsData?: MarketData;
+  marketOverviewData?: MarketData; // MarketData directly from fetchMarketData for MarketOverviewCard
+  technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; // Transformed data for TechnicalIndicatorsCard
   economicIndicatorData?: EconomicIndicatorData;
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
 
-  if (!twelveDataApiKey) {
-    const errorMsg = "Twelve Data API Key is not set. Please set it to fetch market data.";
-    // console.warn(errorMsg); // Already handled by UI and lastError
-    return {
-      tradeRecommendation: { recommendation: 'HOLD', reason: errorMsg, error: errorMsg },
-      newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed: ${errorMsg}`, error: errorMsg },
-      marketOverviewData: { assetName, timeframe: timeframeId, error: errorMsg },
-      technicalIndicatorsData: { assetName, timeframe: timeframeId, error: errorMsg },
-      economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', source: 'Error', error: errorMsg },
-      combinedError: errorMsg,
-    };
-  }
-   if (!exchangeRateApiKey) {
-    // This is less critical, handled by EconomicIndicatorCard itself or its data fetching error.
-    // console.warn("ExchangeRate-API Key is not set. Please set it for economic data.");
-  }
-
-
   try {
-    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, twelveDataApiKey);
-    const economicApiDataPromise = exchangeRateApiKey 
-      ? fetchEconomicData(assetId, assetName, exchangeRateApiKey)
-      : Promise.resolve<FetchedEconomicData>({ 
-          indicatorName: 'Exchange Rate Data', 
-          value: 'N/A', 
-          source: 'ExchangeRate-API.com', 
-          error: 'API key not provided.' 
-        });
+    // These API keys are now read from .env by the server actions
+    const marketApiDataPromise = fetchMarketData(assetId, assetName, timeframeId, null); // Pass null as key is server-side
+    const economicApiDataPromise = fetchEconomicData(assetId, assetName, null); // Pass null as key is server-side
 
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
 
     let dataErrors: string[] = [];
 
-    // Market Data Error Handling
-    // The fetchMarketData action now handles its own console logging for specific errors like rate limits or invalid keys.
-    // We just need to ensure its error message is captured for UI display.
     if (marketApiData.error) {
+      // Don't log critical errors here if no data was fetched, as fetchMarketData handles its own console logs for specific issues.
+      // This error will be part of combinedError and displayed in UI.
       if (!marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
-        // No market data was fetched.
         dataErrors.push(`Market Data: ${marketApiData.error}`);
       } else {
-        // Some data might have been fetched, or it's a non-blocking error on a specific indicator.
         dataErrors.push(`Market Data (Partial): ${marketApiData.error}`);
       }
     }
 
-    // Economic Data Error Handling
     if (economicApiData.error) {
-      console.warn(`Economic data error for ${assetName}: ${economicApiData.error}`); // Keep this warn for distinct API
+      console.warn(`Economic data error for ${assetName}: ${economicApiData.error}`);
       dataErrors.push(`Economic Data: ${economicApiData.error}`);
     }
     
     if (dataErrors.length > 0) {
         combinedError = dataErrors.join('; ');
     }
+
+    // Transform MarketData to ProcessedTechnicalIndicatorsData
+    const processedTechIndicators: ProcessedTechnicalIndicatorsData = {
+      rsi: {
+        value: marketApiData.rsi,
+        status: getRsiStatus(marketApiData.rsi),
+      },
+      macd: {
+        value: marketApiData.macd?.value,
+        signal: marketApiData.macd?.signal,
+        histogram: marketApiData.macd?.histogram,
+        status: getMacdStatus(marketApiData.macd),
+      },
+      error: marketApiData.error, // Pass along any error related to market data fetching for tech indicators
+    };
     
     // If market data is unavailable (no price, rsi, macd) and an error exists for it, return early.
+    // The technicalIndicatorsData will still be populated with statuses like 'N/A' and the error.
     if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
             newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed due to market data error: ${marketApiData.error}`, error: marketApiData.error },
             marketOverviewData: { ...marketApiData, error: marketApiData.error }, 
-            technicalIndicatorsData: { ...marketApiData, error: marketApiData.error },
+            technicalIndicatorsData: processedTechIndicators, // Use transformed data
             economicIndicatorData: { 
                 indicatorName: economicApiData.indicatorName || 'N/A', 
                 value: economicApiData.value || 'N/A', 
@@ -126,7 +138,7 @@ async function fetchCombinedDataForAsset(
                 lastUpdated: (economicApiData as any).lastUpdated,
                 error: economicApiData.error || combinedError 
             },
-            combinedError, // This will contain marketApiData.error
+            combinedError,
         };
     }
 
@@ -134,7 +146,11 @@ async function fetchCombinedDataForAsset(
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    const simulatedInterestRate = 0.5 + Math.random() * 2; 
+    // Interest rate for AI flow - this is a placeholder. EconomicAPIData provides exchange rates.
+    const simulatedInterestRateFromEconomicApi = economicApiData.value && !isNaN(parseFloat(economicApiData.value)) 
+        ? parseFloat(economicApiData.value) * 0.1 : 0.5 + Math.random() * 2; // Simple placeholder if API fails or not FX
+    const interestRateForAI = parseFloat(simulatedInterestRateFromEconomicApi.toFixed(2));
+
 
     let newsHeadlines: string[] = [
         `Market analysts watch ${assetName} closely on ${timeframeId} charts.`,
@@ -148,7 +164,7 @@ async function fetchCombinedDataForAsset(
       rsi: parseFloat(rsiValue.toFixed(2)),
       macd: parseFloat(macdValue.toFixed(4)),
       sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), 
-      interestRate: parseFloat(simulatedInterestRate.toFixed(2)), 
+      interestRate: interestRateForAI, 
       price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("CL") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
     };
 
@@ -171,21 +187,26 @@ async function fetchCombinedDataForAsset(
     return {
         tradeRecommendation,
         newsSentiment,
-        marketOverviewData: marketApiData,
-        technicalIndicatorsData: marketApiData,
+        marketOverviewData: marketApiData, // Raw market data for overview
+        technicalIndicatorsData: processedTechIndicators, // Transformed data for tech indicators card
         economicIndicatorData: finalEconomicData,
-        combinedError: marketApiData.error || combinedError // Prioritize market data error for combinedError display if any
+        combinedError: marketApiData.error || economicApiData.error || tradeRecommendation?.error || newsSentiment?.error || combinedError 
     };
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`Error in fetchCombinedDataForAsset for ${assetName} (${timeframeId}):`, errorMessage);
     combinedError = errorMessage;
+    const defaultTechIndicators: ProcessedTechnicalIndicatorsData = {
+        rsi: { value: undefined, status: 'N/A' },
+        macd: { value: undefined, signal: undefined, histogram: undefined, status: 'N/A' },
+        error: combinedError,
+    };
     return {
         tradeRecommendation: { recommendation: 'HOLD', reason: `Analysis error: ${combinedError}`, error: combinedError },
         newsSentiment: { overallSentiment: 'Unknown', summary: `Analysis error: ${combinedError}`, error: combinedError },
         marketOverviewData: { assetName, timeframe: timeframeId, error: combinedError },
-        technicalIndicatorsData: { assetName, timeframe: timeframeId, error: combinedError },
+        technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', source: 'Error', error: combinedError },
         combinedError
     };
@@ -196,61 +217,27 @@ export default function HomePage() {
   const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[0]);
   
-  const [twelveDataApiKey, setTwelveDataApiKey] = useState<string | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState<string>('');
-  const [isTwelveDataKeySet, setIsTwelveDataKeySet] = useState(false);
-
-  const [exchangeRateApiKey, setExchangeRateApiKey] = useState<string | null>(null);
-  const [exchangeRateApiKeyInput, setExchangeRateApiKeyInput] = useState<string>('');
-  const [isExchangeRateKeySet, setIsExchangeRateKeySet] = useState(false);
-
-
   const [aiData, setAiData] = useState<{
     tradeRecommendation: GenerateTradeRecommendationOutput | null;
     newsSentiment: SummarizeNewsSentimentOutput | null;
     marketOverviewData?: MarketData;
-    technicalIndicatorsData?: MarketData;
+    technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; // Updated type
     economicIndicatorData?: EconomicIndicatorData;
     combinedError?: string;
   } | null>(null);
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Start loading true
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
 
 
   useEffect(() => {
-    const storedTwelveDataKey = localStorage.getItem('twelveDataApiKey');
-    if (storedTwelveDataKey) {
-      setTwelveDataApiKey(storedTwelveDataKey);
-      setApiKeyInput(storedTwelveDataKey);
-      setIsTwelveDataKeySet(true);
-    }
-    const storedExchangeRateKey = localStorage.getItem('exchangeRateApiKey');
-    if (storedExchangeRateKey) {
-      setExchangeRateApiKey(storedExchangeRateKey);
-      setExchangeRateApiKeyInput(storedExchangeRateKey);
-      setIsExchangeRateKeySet(true);
-    }
-    
-     if (!storedTwelveDataKey) {
-      setIsLoading(false); 
-    }
-  }, []);
+    // Initial data load effect
+     loadData(selectedAsset, selectedTimeframe);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only once on mount
 
-  const loadData = useCallback(async (
-      asset: typeof ASSETS[0], 
-      timeframe: typeof TIMEFRAMES[0], 
-      currentTwelveDataKey: string | null,
-      currentExchangeRateKey: string | null
-    ) => {
-    if (!currentTwelveDataKey) {
-      setLastError("Twelve Data API Key is not set. Please enter your API key to fetch market data.");
-      setIsLoading(false);
-      setAiData(null);
-      return;
-    }
-
+  const loadData = useCallback(async (asset: typeof ASSETS[0], timeframe: typeof TIMEFRAMES[0]) => {
     setIsLoading(true);
     setLastError(null);
     setAiData(null); 
@@ -258,178 +245,91 @@ export default function HomePage() {
         asset.id, 
         asset.name, 
         asset.type, 
-        timeframe.id, 
-        currentTwelveDataKey,
-        currentExchangeRateKey
+        timeframe.id,
     );
     setAiData(data);
     if (data.combinedError) {
         setLastError(data.combinedError);
-    } else if (data.marketOverviewData?.error || data.technicalIndicatorsData?.error || data.economicIndicatorData?.error || data.tradeRecommendation?.error || data.newsSentiment?.error) {
-        const errors = [
+    } else {
+        const errorMessages = [
+            data.tradeRecommendation?.error,
+            data.newsSentiment?.error,
             data.marketOverviewData?.error,
             data.technicalIndicatorsData?.error,
             data.economicIndicatorData?.error,
-            data.tradeRecommendation?.error,
-            data.newsSentiment?.error,
         ].filter(Boolean).join('; ');
-        if(errors) setLastError(errors);
+        if (errorMessages) {
+            setLastError(errorMessages);
+        }
     }
     setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    if (isTwelveDataKeySet && twelveDataApiKey) {
-      loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, exchangeRateApiKey);
-    } else {
-      setAiData(null); 
-      setLastError("Twelve Data API Key is required to fetch market data.");
+    // This effect handles changes to selectedAsset or selectedTimeframe
+    // The initial load is handled by the empty-dependency useEffect above.
+    // This prevents double-loading on mount if selectedAsset/Timeframe are part of deps for initial load.
+    if (!isLoading && !isRefreshing) { // Only reload if not currently loading/refreshing from another source
+        loadData(selectedAsset, selectedTimeframe);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAsset, selectedTimeframe, isTwelveDataKeySet, twelveDataApiKey, isExchangeRateKeySet, exchangeRateApiKey]);
+  }, [selectedAsset, selectedTimeframe]); // Dependencies: selectedAsset, selectedTimeframe
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
     if (asset.id !== selectedAsset.id) {
       setSelectedAsset(asset);
+      // Data will be reloaded by the useEffect watching selectedAsset
     }
   };
 
   const handleTimeframeChange = (timeframe: typeof TIMEFRAMES[0]) => {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
+      // Data will be reloaded by the useEffect watching selectedTimeframe
     }
   };
 
   const handleRefresh = async () => {
-      if (!twelveDataApiKey) {
-        setLastError("Cannot refresh: Twelve Data API Key is not set.");
-        return;
-      }
       setIsRefreshing(true);
       setLastError(null); 
       const data = await fetchCombinedDataForAsset(
           selectedAsset.id, 
           selectedAsset.name, 
           selectedAsset.type, 
-          selectedTimeframe.id, 
-          twelveDataApiKey,
-          exchangeRateApiKey
+          selectedTimeframe.id,
         );
       setAiData(data);
       if (data.combinedError) {
         setLastError(data.combinedError);
-      } else if (data.marketOverviewData?.error || data.technicalIndicatorsData?.error || data.economicIndicatorData?.error || data.tradeRecommendation?.error || data.newsSentiment?.error) {
-        const errors = [
+      } else {
+        const errorMessages = [
+            data.tradeRecommendation?.error,
+            data.newsSentiment?.error,
             data.marketOverviewData?.error,
             data.technicalIndicatorsData?.error,
             data.economicIndicatorData?.error,
-            data.tradeRecommendation?.error,
-            data.newsSentiment?.error,
         ].filter(Boolean).join('; ');
-        if(errors) setLastError(errors);
+        if (errorMessages) {
+            setLastError(errorMessages);
+        }
       }
       setIsRefreshing(false);
   };
 
-  const handleSetTwelveDataApiKey = () => {
-    if (apiKeyInput.trim()) {
-      localStorage.setItem('twelveDataApiKey', apiKeyInput.trim());
-      setTwelveDataApiKey(apiKeyInput.trim());
-      setIsTwelveDataKeySet(true);
-      setLastError(null); 
-    } else {
-      localStorage.removeItem('twelveDataApiKey');
-      setTwelveDataApiKey(null);
-      setIsTwelveDataKeySet(false);
-      setLastError("Twelve Data API Key cannot be empty.");
-      setAiData(null); 
-    }
-  };
-
-  const handleSetExchangeRateApiKey = () => {
-    if (exchangeRateApiKeyInput.trim()) {
-      localStorage.setItem('exchangeRateApiKey', exchangeRateApiKeyInput.trim());
-      setExchangeRateApiKey(exchangeRateApiKeyInput.trim());
-      setIsExchangeRateKeySet(true);
-      // Data load will be triggered by useEffect due to state change
-    } else {
-      localStorage.removeItem('exchangeRateApiKey');
-      setExchangeRateApiKey(null);
-      setIsExchangeRateKeySet(false);
-       if (aiData?.economicIndicatorData) {
-         setAiData(prev => prev ? ({...prev, economicIndicatorData: {...prev.economicIndicatorData!, error: "ExchangeRate-API Key removed. Indicator requires key.", value: "N/A" }}) : null);
-       } else {
-          setAiData(prev => prev ? ({...prev, economicIndicatorData: { indicatorName: 'Economic Data', value: 'N/A', source: 'ExchangeRate-API.com', error: "ExchangeRate-API Key removed. Indicator requires key." }}) : null);
-       }
-    }
-  };
-
-
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
-  const isDataFetchingDisabled = !isTwelveDataKeySet || isLoading || isRefreshing;
+  const isDataFetchingDisabled = isLoading || isRefreshing;
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <Header />
       <main className="flex-grow container mx-auto p-4 md:p-8">
         <div className="mb-6 p-4 border border-border rounded-lg bg-card shadow-md space-y-4">
-          <div>
-            <Label htmlFor="apiKeyInput" className="block text-sm font-medium text-foreground mb-1">
-              Twelve Data API Key (Required for Market Data & AI Signals)
-            </Label>
-            <div className="flex gap-2 items-center">
-              <Input
-                id="apiKeyInput"
-                type="text"
-                placeholder="Enter your Twelve Data API Key"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                className="flex-grow"
-              />
-              <Button onClick={handleSetTwelveDataApiKey} size="sm">
-                <KeyRound className="mr-2 h-4 w-4" />
-                Set Key
-              </Button>
+            <div className="text-sm text-muted-foreground p-2 bg-muted/30 rounded-md">
+                <Info size={16} className="inline mr-2" />
+                API keys for Twelve Data and ExchangeRate-API.com are configured on the server. Data will be fetched automatically.
             </div>
-            {!isTwelveDataKeySet && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Required for price, RSI, MACD, and AI trade signals. Get yours from <a href="https://twelvedata.com/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">twelvedata.com</a>.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="exchangeRateApiKeyInput" className="block text-sm font-medium text-foreground mb-1">
-              ExchangeRate-API.com Key (Optional for Economic Indicators)
-            </Label>
-            <div className="flex gap-2 items-center">
-              <Input
-                id="exchangeRateApiKeyInput"
-                type="text"
-                placeholder="Enter your ExchangeRate-API.com Key"
-                value={exchangeRateApiKeyInput}
-                onChange={(e) => setExchangeRateApiKeyInput(e.target.value)}
-                className="flex-grow"
-              />
-              <Button onClick={handleSetExchangeRateApiKey} size="sm">
-                <KeyRound className="mr-2 h-4 w-4" />
-                Set Key
-              </Button>
-            </div>
-             {!isExchangeRateKeySet && (
-                <p className="text-xs text-muted-foreground mt-1">
-                Optional: for some economic indicators. Get yours from <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">exchangerate-api.com</a>.
-                </p>
-            )}
-          </div>
-           <div className="mt-3 p-3 border border-destructive/30 bg-destructive/10 text-destructive/80 rounded-md flex items-start gap-2 text-xs">
-            <TriangleAlert className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>
-              <strong>Security Note:</strong> API keys entered here are stored in your browser's local storage for convenience. For production apps, manage keys securely on a server.
-            </span>
-          </div>
         </div>
 
         <div className="flex flex-col gap-4 mb-6">
@@ -481,9 +381,7 @@ export default function HomePage() {
             <div>
                 <p className="font-semibold">Notice:</p>
                 <p className="text-sm">{lastError}</p>
-                 {!(lastError.toLowerCase().includes("api key") || lastError.toLowerCase().includes("twelve data api key")) &&
-                  <p className="text-xs mt-1">Some data might be unavailable or outdated. AI analysis may be affected.</p>
-                }
+                <p className="text-xs mt-1">Some data might be unavailable or outdated. AI analysis may be affected.</p>
             </div>
           </div>
         )}
@@ -496,7 +394,7 @@ export default function HomePage() {
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
           </div>
-        ) : aiData && isTwelveDataKeySet ? (
+        ) : aiData ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
               <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={!aiData?.tradeRecommendation && !aiData?.combinedError && !aiData.tradeRecommendation?.error} />
@@ -509,7 +407,7 @@ export default function HomePage() {
             </div>
             <div className="lg:col-span-1">
               <TechnicalIndicatorsCard
-                initialData={aiData?.technicalIndicatorsData}
+                initialData={aiData?.technicalIndicatorsData} // This now passes ProcessedTechnicalIndicatorsData
                 key={`${selectedAsset.id}-${selectedTimeframe.id}-tech`}
               />
             </div>
@@ -531,7 +429,7 @@ export default function HomePage() {
              <div className="text-center py-10">
                 <Info size={48} className="mx-auto text-muted-foreground mb-4" />
                 <p className="text-xl text-muted-foreground">
-                    {!isTwelveDataKeySet ? "Please set your Twelve Data API key to load market data." : "Select an asset and timeframe to begin or try refreshing."}
+                    Select an asset and timeframe to begin or try refreshing. Ensure API keys are correctly configured on the server.
                 </p>
             </div>
         )}
