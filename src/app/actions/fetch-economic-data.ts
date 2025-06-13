@@ -7,147 +7,151 @@ export interface EconomicData {
   comparisonCurrency?: string;
   source: string;
   error?: string;
-  lastUpdated?: string;
+  lastUpdated?: string; // Unix timestamp as string or formatted date string
 }
 
-// Helper to extract base currency from assetId (e.g., "EUR/USD" -> "EUR")
-// For XAU/USD, XAG/USD, CL (Oil), BTC/USD we might want to show their value against USD or a general index.
-// For simplicity, we'll focus on the first part of currency pairs.
-// For commodities/crypto, we'll try to get their USD rate or fetch a major currency like EUR as a proxy for economic health.
-function getBaseCurrencyForApi(assetId: string): string {
-  if (assetId.includes('/')) {
-    return assetId.split('/')[0].toUpperCase();
+// Helper to extract base and target currencies for OpenExchangeRates
+// OpenExchangeRates primarily gives rates against USD.
+// For a pair like EUR/USD, we want the EUR rate (which is 1/USD_EUR_rate).
+// For XAU/USD, we'd ideally get XAU price in USD. OpenExchangeRates has some commodity rates against USD.
+function getSymbolsForOpenExchangeRates(assetId: string): { base: string, target: string, isCommodityOrCrypto: boolean } {
+  const parts = assetId.split('/');
+  if (assetId === 'CL') return { base: 'USD', target: 'WTI', isCommodityOrCrypto: true }; // WTI is a common ticker for crude
+  if (assetId === 'XAU/USD') return { base: 'USD', target: 'XAU', isCommodityOrCrypto: true };
+  if (assetId === 'XAG/USD') return { base: 'USD', target: 'XAG', isCommodityOrCrypto: true };
+  if (assetId === 'BTC/USD') return { base: 'USD', target: 'BTC', isCommodityOrCrypto: true };
+
+  // For currency pairs like EUR/USD, target is USD, base is EUR
+  if (parts.length === 2) {
+    return { base: parts[0].toUpperCase(), target: parts[1].toUpperCase(), isCommodityOrCrypto: false };
   }
-  // For non-currency pairs like "CL", "XAU/USD", "BTC/USD",
-  // we might want to fetch rates for a major currency like EUR or USD
-  // as a proxy for general economic data. ExchangeRate-API needs a base currency.
-  // If it's XAU/USD, BTC/USD, etc., the "base" is XAU, BTC.
-  // Let's assume for these we want to see their value in USD,
-  // but the API works by base currency.
-  // For simplicity, if it's a commodity or crypto, let's use USD as base to see other rates.
-  // Or, more directly, if we want XAU/USD, we are interested in USD.
-  // TradingEconomics is better for specific indicators.
-  // With ExchangeRate-API, we are limited to FX.
-  // Let's return the primary currency of the pair.
-  switch (assetId) {
-    case 'XAU/USD':
-    case 'XAG/USD':
-    case 'BTC/USD':
-      return 'USD'; // Or another major currency if we want to show its general strength
-    case 'CL': // Crude oil is often priced in USD
-      return 'USD';
-    default: // For pairs like EUR/USD, GBP/JPY
-      return assetId.split('/')[0].toUpperCase();
-  }
+  // Default fallback (should not happen with current ASSETS)
+  return { base: 'USD', target: assetId.toUpperCase(), isCommodityOrCrypto: false};
 }
 
 
 export async function fetchEconomicData(
-  assetId: string, // e.g., "EUR/USD", "XAU/USD"
-  assetName: string, // e.g., "EUR/USD", "Gold (Spot)"
+  assetId: string, 
+  assetName: string, 
   apiKey: string | null
 ): Promise<EconomicData> {
   if (!apiKey) {
-    console.error('ExchangeRate-API key was not provided to fetchEconomicData action.');
     return {
-      indicatorName: 'Exchange Rate Data',
+      indicatorName: `Exchange Rate: ${assetName}`,
       value: 'N/A',
-      source: 'ExchangeRate-API.com',
-      error: 'API key not configured for ExchangeRate-API.',
+      source: 'OpenExchangeRates.org',
+      error: 'API key not configured for OpenExchangeRates.org.',
     };
   }
 
-  const baseCurrency = getBaseCurrencyForApi(assetId);
-  const targetCurrency = assetId.includes('/') ? assetId.split('/')[1].toUpperCase() : 'USD';
-  // If assetId is something like XAU/USD, target is USD. If EUR/USD, target is USD.
-  // If GBP/JPY, target is JPY.
-
-  const apiUrl = `https://v6.exchangerate-api.com/v6/${apiKey}/latest/${baseCurrency}`;
+  const { base: apiBaseCurrency, target: apiTargetCurrency, isCommodityOrCrypto } = getSymbolsForOpenExchangeRates(assetId);
+  
+  // OpenExchangeRates provides all rates against USD by default in the free plan
+  // Or against a specified base in paid plans.
+  // We will fetch `latest.json` which is USD-based for free tier.
+  // Then we will calculate the desired pair rate if it's not USD based.
+  const apiUrl = `https://openexchangerates.org/api/latest.json?app_id=${apiKey}`;
 
   try {
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, { next: { revalidate: 3600 } }); // Cache for 1 hour
     const data = await response.json();
 
-    if (!response.ok || data.result === 'error') {
-      let errorMessage = `API Error: ${data['error-type'] || response.statusText || 'Unknown error'}`;
-      if (data['error-type'] === 'invalid-key') {
-        errorMessage = 'Invalid ExchangeRate-API Key. Please check the key.';
-      } else if (data['error-type'] === 'inactive-account') {
-        errorMessage = 'ExchangeRate-API account is inactive.';
-      } else if (data['error-type'] === 'quota-reached') {
-        errorMessage = 'ExchangeRate-API quota reached.';
-      }
-      console.error(`Error fetching economic data from ExchangeRate-API for ${baseCurrency}: ${errorMessage}`, data);
-      return {
-        indicatorName: `Exchange Rate: ${assetName}`,
-        value: 'N/A',
-        source: 'ExchangeRate-API.com',
-        error: errorMessage,
-      };
-    }
-
-    const rate = data.conversion_rates && data.conversion_rates[targetCurrency];
-    if (rate === undefined && targetCurrency !== baseCurrency) {
-       // This can happen if targetCurrency is not in the list, though USD, EUR, JPY, GBP, AUD, CAD usually are.
-       // Or if baseCurrency itself is the target, then rate is 1.
-      console.warn(`Target currency ${targetCurrency} not found in rates for base ${baseCurrency}. Asset: ${assetName}`);
-       return {
-        indicatorName: `Exchange Rate: ${assetName}`,
-        value: 'N/A',
-        source: 'ExchangeRate-API.com',
-        error: `Rate for ${targetCurrency} from base ${baseCurrency} not available.`,
-        lastUpdated: data.time_last_update_utc,
-      };
-    }
-    
-    // For XAU/USD, XAG/USD, BTC/USD, CL - assetId doesn't cleanly map to base/target for this API
-    // The current getBaseCurrencyForApi logic might make less sense for these.
-    // Let's refine the indicator name and value based on what we fetched.
-    let displayValue: string;
-    let indicatorNameDisplay: string;
-    let comparisonDisplay: string | undefined;
-
-    if (assetId.includes('/')) { // Standard currency pair
-        indicatorNameDisplay = `Exchange Rate: ${assetName}`;
-        displayValue = rate !== undefined ? rate.toFixed(5) : 'N/A';
-        comparisonDisplay = targetCurrency;
-    } else { // Commodities/Crypto - fetched USD as base (or EUR)
-        indicatorNameDisplay = `${assetName} (Priced in USD)`; // Assumption
-        // This is tricky because ExchangeRate-API is for FX.
-        // For Gold (XAU/USD), if we fetched base=USD, we get USD vs other currencies.
-        // This doesn't directly give XAU price.
-        // We'll use a placeholder message for these for now with this API.
-        indicatorNameDisplay = `${assetName} - Market Price`;
-        displayValue = 'See Market Overview'; // Defer to TwelveData for actual price
-        comparisonDisplay = '';
-        if (assetId === 'CL') indicatorNameDisplay = "WTI Crude Oil Price";
-        else if (assetId === 'XAU/USD') indicatorNameDisplay = "Gold Spot Price";
-        else if (assetId === 'XAG/USD') indicatorNameDisplay = "Silver Spot Price";
-        else if (assetId === 'BTC/USD') indicatorNameDisplay = "Bitcoin Price";
-         return { // For commodities/crypto, this API isn't the right source for their prices
-            indicatorName: assetName,
-            value: 'Refer to Market Overview',
-            source: 'ExchangeRate-API.com (Note: FX API)',
-            error: `ExchangeRate-API is for currency exchange, not direct ${assetName} pricing.`,
-            lastUpdated: data.time_last_update_utc,
+    if (data.error) {
+        let errorMessage = `API Error ${data.status || ''}: ${data.message || 'Unknown error'}. ${data.description || ''}`;
+        if (data.message === 'invalid_app_id') {
+            errorMessage = 'Invalid OpenExchangeRates.org API Key. Please check the key.';
+        } else if (data.message === 'not_allowed') {
+            errorMessage = 'OpenExchangeRates.org: Access restricted. Your plan may not support this request or an addon is required.';
+        } else if (data.message === 'missing_app_id') {
+            errorMessage = 'OpenExchangeRates.org: API key was not provided (missing_app_id).';
+        }
+        console.error(`Error fetching data from OpenExchangeRates.org for ${assetName}: ${errorMessage}`, data);
+        return {
+            indicatorName: `Data for ${assetName}`,
+            value: 'N/A',
+            source: 'OpenExchangeRates.org',
+            error: errorMessage.substring(0, 200), // Keep error message concise for UI
         };
     }
 
+    const rates = data.rates;
+    const timestamp = data.timestamp; // Unix timestamp
+    const defaultBase = data.base; // Usually USD for free tier
+
+    let displayValue: string = 'N/A';
+    let indicatorNameDisplay: string = `Exchange Rate: ${assetName}`;
+    let comparisonDisplay: string | undefined = apiTargetCurrency;
+
+    if (isCommodityOrCrypto) {
+        // For XAU, XAG, BTC, WTI - OpenExchangeRates provides them against USD
+        // So if apiTargetCurrency is XAU, rates['XAU'] is XAU per USD. We want USD per XAU.
+        // Or if the API directly gives asset per USD (e.g. BTC per USD)
+        if (rates[apiTargetCurrency]) { // e.g. rates['XAU'] is how many XAU for 1 USD. We want 1/rates['XAU'] to get USD per XAU.
+                                        // rates['BTC'] is how many BTC for 1 USD. We want 1/rates['BTC'] to get USD per BTC.
+                                        // However, some APIs might list BTC as USD price directly if USD is not the base.
+                                        // Since OpenExchangeRates free tier is USD base:
+                                        // rates.BTC = value of 1 USD in BTC. Price of BTC in USD = 1 / rates.BTC
+                                        // rates.XAU = value of 1 USD in XAU. Price of XAU in USD = 1 / rates.XAU
+            const rate = rates[apiTargetCurrency];
+            displayValue = (1 / rate).toFixed(assetId === 'BTC/USD' ? 2 : (assetId.includes('XAU') || assetId.includes('XAG') ? 2 : 5));
+            indicatorNameDisplay = `${assetName} vs USD`;
+            comparisonDisplay = defaultBase; // Price is in USD
+        } else {
+            displayValue = 'N/A';
+            indicatorNameDisplay = `${assetName} vs USD`;
+            comparisonDisplay = defaultBase;
+        }
+    } else { // FX pair
+        if (defaultBase === apiBaseCurrency) { // e.g. USD/CAD, apiBase = USD, apiTarget = CAD
+            if (rates[apiTargetCurrency]) {
+                displayValue = rates[apiTargetCurrency].toFixed(5);
+                comparisonDisplay = apiTargetCurrency;
+            }
+        } else if (defaultBase === apiTargetCurrency) { // e.g. EUR/USD, apiBase = EUR, apiTarget = USD
+                                                     // We have rates relative to USD. We need EUR/USD.
+                                                     // So, 1 EUR = rates[EUR] USD.  No, rates[EUR] is how many EUR for 1 USD.
+                                                     // We need (1 / rates[apiBaseCurrency]) to get apiBaseCurrency/USD rate
+            if (rates[apiBaseCurrency]) {
+                displayValue = (1 / rates[apiBaseCurrency]).toFixed(5);
+                comparisonDisplay = apiTargetCurrency; // which is USD
+            }
+        } else { 
+            // Cross-currency, e.g. GBP/JPY. Default base is USD.
+            // GBP/JPY = (GBP/USD) / (JPY/USD) = (1/rates.GBP) / (1/rates.JPY) = rates.JPY / rates.GBP
+            if (rates[apiBaseCurrency] && rates[apiTargetCurrency]) {
+                // rates[apiBaseCurrency] is how many apiBaseCurrency for 1 USD
+                // rates[apiTargetCurrency] is how many apiTargetCurrency for 1 USD
+                // We want: (apiTargetCurrency / USD) / (apiBaseCurrency / USD)
+                // This is (1 / rates[apiTargetCurrency]) / (1 / rates[apiBaseCurrency]) = rates[apiBaseCurrency] / rates[apiTargetCurrency]
+                // No, this is wrong.
+                // We want price of 1 unit of apiBaseCurrency in terms of apiTargetCurrency.
+                // Value of 1 USD in apiBaseCurrency = rates[apiBaseCurrency]
+                // Value of 1 USD in apiTargetCurrency = rates[apiTargetCurrency]
+                // So, apiBaseCurrency / USD = 1 / rates[apiBaseCurrency]
+                // And apiTargetCurrency / USD = 1 / rates[apiTargetCurrency]
+                // Therefore, (apiBaseCurrency / USD) * (USD / apiTargetCurrency) = (apiBaseCurrency / apiTargetCurrency)
+                // = (1 / rates[apiBaseCurrency]) * rates[apiTargetCurrency]
+                const rate = rates[apiTargetCurrency] / rates[apiBaseCurrency];
+                displayValue = rate.toFixed(5);
+            }
+        }
+    }
 
     return {
       indicatorName: indicatorNameDisplay,
       value: displayValue,
       comparisonCurrency: comparisonDisplay,
-      source: 'ExchangeRate-API.com',
-      lastUpdated: data.time_last_update_utc,
+      source: 'OpenExchangeRates.org',
+      lastUpdated: timestamp ? new Date(timestamp * 1000).toUTCString() : undefined,
     };
+
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`Network or unexpected error in fetchEconomicData for ${assetName}: ${errorMessage}`);
+    console.error(`Network or unexpected error in fetchEconomicData (OpenExchangeRates) for ${assetName}: ${errorMessage}`);
     return {
-      indicatorName: `Exchange Rate: ${assetName}`,
+      indicatorName: `Data for ${assetName}`,
       value: 'N/A',
-      source: 'ExchangeRate-API.com',
+      source: 'OpenExchangeRates.org',
       error: `Network/Client error: ${errorMessage.substring(0, 100)}`,
     };
   }

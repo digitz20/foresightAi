@@ -1,15 +1,15 @@
 
 'use client';
 
-import { Landmark, AlertTriangle, InfoIcon } from 'lucide-react';
+import { Landmark, AlertTriangle, InfoIcon, Activity } from 'lucide-react'; // Added Activity for generic icon
 import DashboardCard from './DashboardCard';
 import { useEffect, useState } from 'react';
 
 export type EconomicIndicatorData = {
   indicatorName?: string;
   value?: string;
-  comparisonCurrency?: string; // e.g., "USD" if value is an exchange rate against USD
-  lastUpdated?: string; // e.g., "Mon, 15 Jul 2024 00:00:01 +0000"
+  comparisonCurrency?: string;
+  lastUpdated?: string; // Can be Unix timestamp string or formatted date
   source?: string;
   error?: string;
 };
@@ -31,23 +31,31 @@ export default function EconomicIndicatorCard({ initialData }: EconomicIndicator
     if (initialData) {
       setEconomicData(initialData);
     } else {
-      // Retain default only if no initial data is ever provided
-      setEconomicData(prev => initialData === undefined && Object.keys(prev).length === 0 ? defaultData : (initialData || defaultData));
+      setEconomicData(defaultData);
     }
   }, [initialData]);
 
   const formatLastUpdated = (dateString?: string) => {
     if (!dateString) return 'N/A';
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch (e) {
-      return dateString; // if parsing fails, show original
+    // Check if it's a Unix timestamp (numeric string)
+    if (/^\d+$/.test(dateString) && !isNaN(Number(dateString))) {
+      try {
+        return new Date(Number(dateString) * 1000).toLocaleString();
+      } catch (e) { /* fallback */ }
     }
+    // Try parsing as a date string
+    try {
+      const date = new Date(dateString);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleString();
+      }
+    } catch (e) { /* fallback */ }
+    return dateString; // if parsing fails, show original
   };
 
   if (economicData.error && economicData.value === 'N/A') {
     return (
-      <DashboardCard title="Economic Indicators" icon={Landmark}>
+      <DashboardCard title={economicData.indicatorName || "Economic Indicators"} icon={Landmark}>
         <div className="flex flex-col items-center justify-center text-destructive p-4 gap-2">
           <AlertTriangle className="h-8 w-8" />
           <p className="font-semibold text-center">Economic Data Error</p>
@@ -58,9 +66,9 @@ export default function EconomicIndicatorCard({ initialData }: EconomicIndicator
     );
   }
   
-  if (economicData.value === 'Refer to Market Overview') {
+  if (economicData.value === 'Refer to Market Overview') { // This case might be from old API, can be removed if not relevant
      return (
-      <DashboardCard title={economicData.indicatorName || "Economic Indicators"} icon={Landmark}>
+      <DashboardCard title={economicData.indicatorName || "Economic Data"} icon={Landmark}>
         <div className="flex flex-col items-center justify-center text-muted-foreground p-4 gap-2">
           <InfoIcon className="h-8 w-8" />
           <p className="text-sm text-center">{economicData.value}</p>
@@ -71,14 +79,11 @@ export default function EconomicIndicatorCard({ initialData }: EconomicIndicator
     );
   }
 
-
   return (
-    <DashboardCard title="Economic Indicators" icon={Landmark}>
+    <DashboardCard title={economicData.indicatorName || "Economic Data"} icon={Landmark}>
       <div className="space-y-3">
-        <h3 className="text-md font-medium text-foreground">{economicData.indicatorName || 'N/A'}</h3>
         <div className="flex items-baseline gap-2">
-          {/* Using a generic icon or could be dynamic based on indicator type */}
-          <Landmark className="h-8 w-8 text-primary opacity-50" /> 
+          <Activity className="h-8 w-8 text-primary opacity-70" /> 
           <p className="text-3xl font-bold text-primary">
             {economicData.value || 'N/A'}
             {economicData.comparisonCurrency && economicData.value !== 'N/A' && (
