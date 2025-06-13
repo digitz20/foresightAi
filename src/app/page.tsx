@@ -26,7 +26,7 @@ const ASSETS = [
   { id: "USD/CAD", name: "USD/CAD", type: "currency" },
   { id: "XAU/USD", name: "Gold (Spot)", type: "commodity" },
   { id: "XAG/USD", name: "Silver (Spot)", type: "commodity" },
-  { id: "CL", name: "Crude Oil (WTI Futures)", type: "commodity" }, // Note: TwelveData symbol for WTI is often CL
+  { id: "CL", name: "Crude Oil (WTI Futures)", type: "commodity" },
   { id: "BTC/USD", name: "Bitcoin (BTC/USD)", type: "crypto" },
 ];
 
@@ -48,16 +48,16 @@ async function fetchCombinedDataForAsset(
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
   newsSentiment: SummarizeNewsSentimentOutput | null;
-  marketOverviewData?: MarketData; // Using MarketData type directly
-  technicalIndicatorsData?: MarketData; // Using MarketData type for consistency
+  marketOverviewData?: MarketData;
+  technicalIndicatorsData?: MarketData;
   economicIndicatorData?: EconomicIndicatorData;
-  combinedError?: string; // Single error field for overall issues
+  combinedError?: string;
 }> {
   let combinedError: string | undefined;
 
   if (!twelveDataApiKey) {
     const errorMsg = "Twelve Data API Key is not set. Please set it to fetch market data.";
-    console.warn(errorMsg);
+    // console.warn(errorMsg); // Already handled by UI and lastError
     return {
       tradeRecommendation: { recommendation: 'HOLD', reason: errorMsg, error: errorMsg },
       newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed: ${errorMsg}`, error: errorMsg },
@@ -68,10 +68,8 @@ async function fetchCombinedDataForAsset(
     };
   }
    if (!exchangeRateApiKey) {
-    const errorMsg = "ExchangeRate-API Key is not set. Please set it for economic data.";
-     // This is less critical than TwelveData for core metrics, so maybe just an error on that card
-     console.warn(errorMsg);
-     // We can proceed with market data if ExchangeRate-API key is missing
+    // This is less critical, handled by EconomicIndicatorCard itself or its data fetching error.
+    // console.warn("ExchangeRate-API Key is not set. Please set it for economic data.");
   }
 
 
@@ -89,16 +87,23 @@ async function fetchCombinedDataForAsset(
     const [marketApiData, economicApiData] = await Promise.all([marketApiDataPromise, economicApiDataPromise]);
 
     let dataErrors: string[] = [];
-    if (marketApiData.error && (!marketApiData.price && !marketApiData.rsi && !marketApiData.macd)) {
-      console.error(`Critical market data error for ${assetName} (${timeframeId}): ${marketApiData.error}`);
-      dataErrors.push(`Market Data: ${marketApiData.error}`);
-    } else if (marketApiData.error) {
-      console.warn(`Partial market data or non-critical error for ${assetName} (${timeframeId}): ${marketApiData.error}`);
-      dataErrors.push(`Market Data (Partial): ${marketApiData.error}`);
+
+    // Market Data Error Handling
+    // The fetchMarketData action now handles its own console logging for specific errors like rate limits or invalid keys.
+    // We just need to ensure its error message is captured for UI display.
+    if (marketApiData.error) {
+      if (!marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
+        // No market data was fetched.
+        dataErrors.push(`Market Data: ${marketApiData.error}`);
+      } else {
+        // Some data might have been fetched, or it's a non-blocking error on a specific indicator.
+        dataErrors.push(`Market Data (Partial): ${marketApiData.error}`);
+      }
     }
 
+    // Economic Data Error Handling
     if (economicApiData.error) {
-      console.warn(`Economic data error for ${assetName}: ${economicApiData.error}`);
+      console.warn(`Economic data error for ${assetName}: ${economicApiData.error}`); // Keep this warn for distinct API
       dataErrors.push(`Economic Data: ${economicApiData.error}`);
     }
     
@@ -106,31 +111,29 @@ async function fetchCombinedDataForAsset(
         combinedError = dataErrors.join('; ');
     }
     
-    // If critical market data error and no data, return early
+    // If market data is unavailable (no price, rsi, macd) and an error exists for it, return early.
     if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd) {
          return {
             tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
             newsSentiment: { overallSentiment: 'Unknown', summary: `Sentiment analysis cannot proceed due to market data error: ${marketApiData.error}`, error: marketApiData.error },
-            marketOverviewData: { ...marketApiData, error: marketApiData.error }, // Pass through marketApiData
-            technicalIndicatorsData: { ...marketApiData, error: marketApiData.error }, // Pass through
+            marketOverviewData: { ...marketApiData, error: marketApiData.error }, 
+            technicalIndicatorsData: { ...marketApiData, error: marketApiData.error },
             economicIndicatorData: { 
                 indicatorName: economicApiData.indicatorName || 'N/A', 
                 value: economicApiData.value || 'N/A', 
                 source: economicApiData.source || 'N/A',
                 comparisonCurrency: (economicApiData as any).comparisonCurrency,
                 lastUpdated: (economicApiData as any).lastUpdated,
-                error: economicApiData.error || combinedError // Include its own error or the combined one
+                error: economicApiData.error || combinedError 
             },
-            combinedError,
+            combinedError, // This will contain marketApiData.error
         };
     }
-
 
     const currentPrice = marketApiData.price ?? (assetType === 'crypto' ? 60000 : assetType === 'commodity' ? (assetId.includes("XAU") ? 2300 : (assetId.includes("XAG") ? 25 : (assetId.includes("CL") ? 75 : 100) )) : 1.1);
     const rsiValue = marketApiData.rsi ?? 50;
     const macdValue = marketApiData.macd?.value ?? 0;
     
-    // Interest rate remains a placeholder as ExchangeRate-API provides FX rates, not bank interest rates.
     const simulatedInterestRate = 0.5 + Math.random() * 2; 
 
     let newsHeadlines: string[] = [
@@ -144,8 +147,8 @@ async function fetchCombinedDataForAsset(
     const tradeRecommendationInput: GenerateTradeRecommendationInput = {
       rsi: parseFloat(rsiValue.toFixed(2)),
       macd: parseFloat(macdValue.toFixed(4)),
-      sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), // Placeholder
-      interestRate: parseFloat(simulatedInterestRate.toFixed(2)), // Using simulated
+      sentimentScore: parseFloat(((Math.random() * 2) - 1).toFixed(2)), 
+      interestRate: parseFloat(simulatedInterestRate.toFixed(2)), 
       price: parseFloat(currentPrice.toFixed(assetId.includes("JPY") || assetId.includes("XAU") || assetId.includes("XAG") || assetId.includes("CL") ? 2 : (assetId.includes("BTC") ? 2 : 4))),
     };
 
@@ -162,16 +165,16 @@ async function fetchCombinedDataForAsset(
         comparisonCurrency: (economicApiData as any).comparisonCurrency,
         lastUpdated: (economicApiData as any).lastUpdated,
         source: economicApiData.source,
-        error: economicApiData.error // Pass through error from fetchEconomicData
+        error: economicApiData.error 
     };
     
     return {
         tradeRecommendation,
         newsSentiment,
-        marketOverviewData: marketApiData, // Pass directly
-        technicalIndicatorsData: marketApiData, // Pass directly
+        marketOverviewData: marketApiData,
+        technicalIndicatorsData: marketApiData,
         economicIndicatorData: finalEconomicData,
-        combinedError: marketApiData.error // Prioritize market data error for combinedError display
+        combinedError: marketApiData.error || combinedError // Prioritize market data error for combinedError display if any
     };
 
   } catch (error) {
@@ -197,7 +200,6 @@ export default function HomePage() {
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [isTwelveDataKeySet, setIsTwelveDataKeySet] = useState(false);
 
-  // For ExchangeRate-API Key
   const [exchangeRateApiKey, setExchangeRateApiKey] = useState<string | null>(null);
   const [exchangeRateApiKeyInput, setExchangeRateApiKeyInput] = useState<string>('');
   const [isExchangeRateKeySet, setIsExchangeRateKeySet] = useState(false);
@@ -231,10 +233,8 @@ export default function HomePage() {
       setIsExchangeRateKeySet(true);
     }
     
-    // Initial load will be triggered by the dependency array of the main loadData useEffect
-    // if keys are already set.
      if (!storedTwelveDataKey) {
-      setIsLoading(false); // No key, no initial load for market data
+      setIsLoading(false); 
     }
   }, []);
 
@@ -250,12 +250,10 @@ export default function HomePage() {
       setAiData(null);
       return;
     }
-    // ExchangeRateApiKey is not strictly critical for the app to function, so we don't block loading if it's missing.
-    // It will show an error on the EconomicIndicatorCard instead.
 
     setIsLoading(true);
     setLastError(null);
-    setAiData(null); // Clear previous data
+    setAiData(null); 
     const data = await fetchCombinedDataForAsset(
         asset.id, 
         asset.name, 
@@ -267,12 +265,13 @@ export default function HomePage() {
     setAiData(data);
     if (data.combinedError) {
         setLastError(data.combinedError);
-    } else if (data.marketOverviewData?.error || data.technicalIndicatorsData?.error || data.economicIndicatorData?.error) {
-        // Collect individual errors if no combined error but some partial errors exist
+    } else if (data.marketOverviewData?.error || data.technicalIndicatorsData?.error || data.economicIndicatorData?.error || data.tradeRecommendation?.error || data.newsSentiment?.error) {
         const errors = [
             data.marketOverviewData?.error,
             data.technicalIndicatorsData?.error,
-            data.economicIndicatorData?.error
+            data.economicIndicatorData?.error,
+            data.tradeRecommendation?.error,
+            data.newsSentiment?.error,
         ].filter(Boolean).join('; ');
         if(errors) setLastError(errors);
     }
@@ -280,16 +279,14 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    // Only load if the primary API key (TwelveData) is set.
-    // ExchangeRateAPI key is optional for core functionality.
     if (isTwelveDataKeySet && twelveDataApiKey) {
       loadData(selectedAsset, selectedTimeframe, twelveDataApiKey, exchangeRateApiKey);
     } else {
-      setAiData(null); // Clear data if key isn't set
+      setAiData(null); 
       setLastError("Twelve Data API Key is required to fetch market data.");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAsset, selectedTimeframe, isTwelveDataKeySet, twelveDataApiKey, isExchangeRateKeySet, exchangeRateApiKey]); // Added exchangeRateKey dependencies
+  }, [selectedAsset, selectedTimeframe, isTwelveDataKeySet, twelveDataApiKey, isExchangeRateKeySet, exchangeRateApiKey]);
 
 
   const handleAssetChange = (asset: typeof ASSETS[0]) => {
@@ -310,7 +307,7 @@ export default function HomePage() {
         return;
       }
       setIsRefreshing(true);
-      setLastError(null); // Clear previous errors
+      setLastError(null); 
       const data = await fetchCombinedDataForAsset(
           selectedAsset.id, 
           selectedAsset.name, 
@@ -322,6 +319,15 @@ export default function HomePage() {
       setAiData(data);
       if (data.combinedError) {
         setLastError(data.combinedError);
+      } else if (data.marketOverviewData?.error || data.technicalIndicatorsData?.error || data.economicIndicatorData?.error || data.tradeRecommendation?.error || data.newsSentiment?.error) {
+        const errors = [
+            data.marketOverviewData?.error,
+            data.technicalIndicatorsData?.error,
+            data.economicIndicatorData?.error,
+            data.tradeRecommendation?.error,
+            data.newsSentiment?.error,
+        ].filter(Boolean).join('; ');
+        if(errors) setLastError(errors);
       }
       setIsRefreshing(false);
   };
@@ -332,7 +338,6 @@ export default function HomePage() {
       setTwelveDataApiKey(apiKeyInput.trim());
       setIsTwelveDataKeySet(true);
       setLastError(null); 
-      // Data load will be triggered by useEffect
     } else {
       localStorage.removeItem('twelveDataApiKey');
       setTwelveDataApiKey(null);
@@ -347,16 +352,15 @@ export default function HomePage() {
       localStorage.setItem('exchangeRateApiKey', exchangeRateApiKeyInput.trim());
       setExchangeRateApiKey(exchangeRateApiKeyInput.trim());
       setIsExchangeRateKeySet(true);
-      // Optionally clear specific economic data errors if you want an immediate effect
-      // setLastError(prev => prev?.replace(/Economic Data:.*?;? ?/g, '') || null); 
-      // Data load will be triggered by useEffect
+      // Data load will be triggered by useEffect due to state change
     } else {
       localStorage.removeItem('exchangeRateApiKey');
       setExchangeRateApiKey(null);
       setIsExchangeRateKeySet(false);
-      // No need to set a blocking error, EconomicIndicatorCard will show its own error
        if (aiData?.economicIndicatorData) {
-         setAiData(prev => prev ? ({...prev, economicIndicatorData: {...prev.economicIndicatorData!, error: "ExchangeRate-API Key removed." }}) : null);
+         setAiData(prev => prev ? ({...prev, economicIndicatorData: {...prev.economicIndicatorData!, error: "ExchangeRate-API Key removed. Indicator requires key.", value: "N/A" }}) : null);
+       } else {
+          setAiData(prev => prev ? ({...prev, economicIndicatorData: { indicatorName: 'Economic Data', value: 'N/A', source: 'ExchangeRate-API.com', error: "ExchangeRate-API Key removed. Indicator requires key." }}) : null);
        }
     }
   };
@@ -540,3 +544,4 @@ export default function HomePage() {
     </div>
   );
 }
+
