@@ -49,32 +49,32 @@ const ASSETS: Asset[] = [
     economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
   },
   { 
-    name: "GBP/JPY", type: "currency", searchKeywords: ["GBP", "JPY", "British Pound", "Japanese Yen", "Bank of England", "Bank of Japan"],
-    marketIds: { polygon: "C:GBPJPY", finnhub: "OANDA:GBP_JPY", twelvedata: "GBP/JPY" },
+    name: "GBP/USD", type: "currency", searchKeywords: ["GBP", "USD", "British Pound", "US Dollar", "Bank of England", "BoE", "Federal Reserve", "Fed"],
+    marketIds: { polygon: "C:GBPUSD", finnhub: "OANDA:GBP_USD", twelvedata: "GBP/USD" },
     economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP" }
   },
-   { 
-    name: "AUD/USD", type: "currency", searchKeywords: ["AUD", "USD", "Australian Dollar", "Reserve Bank of Australia"],
+  { 
+    name: "USD/JPY", type: "currency", searchKeywords: ["USD", "JPY", "Japanese Yen", "Bank of Japan", "BoJ"],
+    marketIds: { polygon: "C:USDJPY", finnhub: "OANDA:USD_JPY", twelvedata: "USD/JPY" },
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
+  },
+  { 
+    name: "AUD/USD", type: "currency", searchKeywords: ["AUD", "USD", "Australian Dollar", "Reserve Bank of Australia", "RBA"],
     marketIds: { polygon: "C:AUDUSD", finnhub: "OANDA:AUD_USD", twelvedata: "AUD/USD" },
     economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD" }
   },
   { 
-    name: "USD/CAD", type: "currency", searchKeywords: ["USD", "CAD", "Canadian Dollar", "Bank of Canada"],
+    name: "USD/CAD", type: "currency", searchKeywords: ["USD", "CAD", "Canadian Dollar", "Bank of Canada", "BoC"],
     marketIds: { polygon: "C:USDCAD", finnhub: "OANDA:USD_CAD", twelvedata: "USD/CAD" },
     economicIds: { openexchangerates: "USD", exchangerateapi: "USD" } 
   },
   {
-    name: "USD/JPY", type: "currency", searchKeywords: ["USD", "JPY", "Japanese Yen", "Bank of Japan"],
-    marketIds: { polygon: "C:USDJPY", finnhub: "OANDA:USD_JPY", twelvedata: "USD/JPY" },
-    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
-  },
-  {
-    name: "USD/CHF", type: "currency", searchKeywords: ["USD", "CHF", "Swiss Franc", "SNB"],
+    name: "USD/CHF", type: "currency", searchKeywords: ["USD", "CHF", "Swiss Franc", "SNB", "Swiss National Bank"],
     marketIds: { polygon: "C:USDCHF", finnhub: "OANDA:USD_CHF", twelvedata: "USD/CHF" },
     economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
   },
   {
-    name: "NZD/USD", type: "currency", searchKeywords: ["NZD", "USD", "New Zealand Dollar", "RBNZ"],
+    name: "NZD/USD", type: "currency", searchKeywords: ["NZD", "USD", "New Zealand Dollar", "RBNZ", "Reserve Bank of New Zealand"],
     marketIds: { polygon: "C:NZDUSD", finnhub: "OANDA:NZD_USD", twelvedata: "NZD/USD" },
     economicIds: { openexchangerates: "NZD", exchangerateapi: "NZD" }
   },
@@ -82,6 +82,26 @@ const ASSETS: Asset[] = [
     name: "EUR/GBP", type: "currency", searchKeywords: ["EUR", "GBP", "Euro", "British Pound", "ECB", "BoE"],
     marketIds: { polygon: "C:EURGBP", finnhub: "OANDA:EUR_GBP", twelvedata: "EUR/GBP" },
     economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+  },
+  { 
+    name: "EUR/JPY", type: "currency", searchKeywords: ["EUR", "JPY", "Euro", "Japanese Yen", "ECB", "Bank of Japan", "BoJ"],
+    marketIds: { polygon: "C:EURJPY", finnhub: "OANDA:EUR_JPY", twelvedata: "EUR/JPY" },
+    economicIds: { openexchangerates: "EUR", exchangerateapi: "EUR" }
+  },
+  { 
+    name: "GBP/JPY", type: "currency", searchKeywords: ["GBP", "JPY", "British Pound", "Japanese Yen", "Bank of England", "Bank of Japan"],
+    marketIds: { polygon: "C:GBPJPY", finnhub: "OANDA:GBP_JPY", twelvedata: "GBP/JPY" },
+    economicIds: { openexchangerates: "GBP", exchangerateapi: "GBP" }
+  },
+  { 
+    name: "AUD/CAD", type: "currency", searchKeywords: ["AUD", "CAD", "Australian Dollar", "Canadian Dollar", "Reserve Bank of Australia", "RBA", "Bank of Canada", "BoC"],
+    marketIds: { polygon: "C:AUDCAD", finnhub: "OANDA:AUD_CAD", twelvedata: "AUD/CAD" },
+    economicIds: { openexchangerates: "AUD", exchangerateapi: "AUD" }
+  },
+  { 
+    name: "USD/SGD", type: "currency", searchKeywords: ["USD", "SGD", "Singapore Dollar", "Monetary Authority of Singapore", "MAS"],
+    marketIds: { polygon: "C:USDSGD", finnhub: "OANDA:USD_SGD", twelvedata: "USD/SGD" },
+    economicIds: { openexchangerates: "USD", exchangerateapi: "USD" }
   },
   { 
     name: "Gold (XAU/USD)", type: "commodity", searchKeywords: ["Gold", "XAUUSD", "precious metals", "commodities"],
@@ -274,8 +294,9 @@ async function fetchCombinedDataForAsset(
             case 'CAD': derivedInterestRate = 0.9; break;
             case 'CHF': derivedInterestRate = 0.25; break;
             case 'NZD': derivedInterestRate = 0.85; break;
-            case 'XAU': case 'XAG': case 'BTC': derivedInterestRate = 0.25; break; // Lower rates supportive for these
-            case 'WTI': derivedInterestRate = 0.5; break; // Example rate for oil context
+            case 'SGD': derivedInterestRate = 0.6; break; // Added SGD estimate
+            case 'XAU': case 'XAG': case 'BTC': derivedInterestRate = 0.25; break; 
+            case 'WTI': derivedInterestRate = 0.5; break; 
             default: derivedInterestRate = 0.5;
         }
     }
@@ -299,7 +320,6 @@ async function fetchCombinedDataForAsset(
         error: economicApiData.error 
     };
     
-    // Consolidate errors for the final combinedError string
     let finalErrors: string[] = [];
     if (marketApiData.error) finalErrors.push(`Market: ${marketApiData.error}`);
     if (economicApiData.error) finalErrors.push(`Economic: ${economicApiData.error}`);
