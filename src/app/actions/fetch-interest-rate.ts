@@ -15,7 +15,7 @@ const FRED_SERIES_MAP: Record<string, string> = {
   USD: 'FEDFUNDS',                // Federal Funds Effective Rate
   EUR: 'ECBDFR',                  // ECB Deposit Facility Rate
   JPY: 'BOJDPBAL',                // Bank of Japan Complementary Deposit Facility Rate
-  GBP: 'IUMABEDR',                // Bank of England Official Bank Rate
+  GBP: 'BOEPR',                   // Bank of England Official Bank Rate (Corrected from IUMABEDR)
   AUD: 'RBATCTR',                 // Cash Rate Target, RBA
   CAD: 'V122530',                 // Bank of Canada Overnight Rate Target
   CHF: 'SNBCHFMA',                // SNB Policy Rate
@@ -50,10 +50,13 @@ export async function fetchInterestRate(
     const data = await response.json();
 
     if (!response.ok || data.error_message || !data.observations || data.observations.length === 0) {
-      result.error = `FRED API Error for ${seriesId}: ${data.error_message || response.statusText || 'No observations found.'}`;
+      let errorMessage = data.error_message || response.statusText || 'No observations found.';
       if (response.status === 400 && data.error_message?.includes('API key')) {
-        result.error = 'Invalid FRED API Key.';
+        errorMessage = 'Invalid FRED API Key.';
+      } else if (response.status === 400 && data.error_message?.toLowerCase().includes('series does not exist')) {
+        errorMessage = `The series ${seriesId} does not exist or is not accessible.`;
       }
+      result.error = `FRED API Error for ${seriesId}: ${errorMessage}`;
       return result;
     }
 

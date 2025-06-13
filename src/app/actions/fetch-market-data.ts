@@ -131,9 +131,16 @@ async function fetchFromPolygon(
 
     } else {
         const errorText = await snapshotResponse.text();
-        fetchErrors.push(`Snapshot API Error ${snapshotResponse.status}: ${errorText.substring(0,50)}`);
-        if (snapshotResponse.status === 401 || snapshotResponse.status === 403) isKeyOrRateLimitError = true;
-        if (snapshotResponse.status === 429) isKeyOrRateLimitError = true;
+        let snapshotErrorDetail = `Snapshot API Error ${snapshotResponse.status}: ${errorText.substring(0,50)}`;
+        if (snapshotResponse.status === 404) {
+             snapshotErrorDetail = `Market status snapshot unavailable for ${polygonTicker} (404).`;
+             // For a 404 on snapshot, we don't necessarily flag it as a key/rate limit issue for the whole provider
+        } else {
+            if (snapshotResponse.status === 401 || snapshotResponse.status === 403) isKeyOrRateLimitError = true;
+            if (snapshotResponse.status === 429) isKeyOrRateLimitError = true;
+        }
+        fetchErrors.push(snapshotErrorDetail);
+        result.marketStatus = 'unknown'; // Ensure it's unknown if snapshot fails
     }
 
 
@@ -205,7 +212,7 @@ async function fetchFromPolygon(
                 date: format(new Date(r.t), dateFormat),
                 price: r.c,
               }))
-              .slice(-60); 
+              .slice(-60);
         } else if (historicalData.status === 'ERROR') {
             fetchErrors.push(`Historical: API error - ${historicalData.error || historicalData.message}`);
         } else {
@@ -219,7 +226,7 @@ async function fetchFromPolygon(
     }
      if (!result.price && !result.rsi && !result.macd?.value && !result.historical?.length && !result.error) {
         result.error = `Polygon.io: No market data could be retrieved for ${assetName}. Verify symbol and API key/plan. Timespan: '${indicatorTimespan}'. Historical: ${historicalMultiplier}${historicalTimespan}.`;
-        result.providerSpecificError = true; 
+        result.providerSpecificError = true;
     }
 
   } catch (err) {
@@ -240,21 +247,21 @@ async function fetchFromFinnhub(
   const result: MarketData = { assetName, timeframe: timeframeId, sourceProvider: 'Finnhub.io', marketStatus: 'unknown' };
   const resolution = mapTimeframeToFinnhubResolution(timeframeId);
   const now = Math.floor(Date.now() / 1000);
-  let daysForIndicator = 60; 
-  if (resolution === '5') daysForIndicator = 7; 
-  else if (resolution === 'D') daysForIndicator = 200; 
+  let daysForIndicator = 60;
+  if (resolution === '5') daysForIndicator = 7;
+  else if (resolution === 'D') daysForIndicator = 200;
 
-  const fromTs = now - (daysForIndicator * 24 * 60 * 60); 
+  const fromTs = now - (daysForIndicator * 24 * 60 * 60);
 
   const quoteUrl = `https://finnhub.io/api/v1/quote?symbol=${finnhubTicker}&token=${apiKey}`;
   const rsiUrl = `https://finnhub.io/api/v1/indicator?symbol=${finnhubTicker}&resolution=${resolution}&from=${fromTs}&to=${now}&indicator=rsi&timeperiod=14&token=${apiKey}`;
   const macdUrl = `https://finnhub.io/api/v1/indicator?symbol=${finnhubTicker}&resolution=${resolution}&from=${fromTs}&to=${now}&indicator=macd&fastperiod=12&slowperiod=26&signalperiod=9&token=${apiKey}`;
-  
-  let historicalResolution = 'D'; 
-  let fromTsHistorical = Math.floor(subDays(new Date(), 90).getTime() / 1000); 
+
+  let historicalResolution = 'D';
+  let fromTsHistorical = Math.floor(subDays(new Date(), 90).getTime() / 1000);
   if (timeframeId === '5min') {
     historicalResolution = '5';
-    fromTsHistorical = Math.floor(subDays(new Date(), 2).getTime() / 1000); 
+    fromTsHistorical = Math.floor(subDays(new Date(), 2).getTime() / 1000);
   }
   const toTsHistorical = now;
   const historicalUrl = `https://finnhub.io/api/v1/stock/candle?symbol=${finnhubTicker}&resolution=${historicalResolution}&from=${fromTsHistorical}&to=${toTsHistorical}&token=${apiKey}`;
@@ -279,7 +286,7 @@ async function fetchFromFinnhub(
       fetchErrors.push(detail);
     } else {
       const quoteData = await quoteResponse.json();
-      if (quoteData.c !== undefined) result.price = parseFloat(quoteData.c); 
+      if (quoteData.c !== undefined) result.price = parseFloat(quoteData.c);
       else fetchErrors.push('Quote: Price data (c) not found.');
       if (quoteData.t !== undefined) result.lastTradeTimestamp = quoteData.t * 1000; // Finnhub 't' is Unix seconds
     }
@@ -316,7 +323,7 @@ async function fetchFromFinnhub(
       } else if (macdData.s !== 'ok') fetchErrors.push(`MACD: API error - ${macdData.s || 'Finnhub MACD Error'}`);
       else fetchErrors.push('MACD: Data not found/unexpected format.');
     }
-    
+
     // Process Historical Data
     if (!historicalResponse.ok) {
         const errorText = await historicalResponse.text();
@@ -331,7 +338,7 @@ async function fetchFromFinnhub(
              result.historical = historicalData.c.map((price: number, index: number) => ({
                 date: format(fromUnixTime(historicalData.t[index]), dateFormat),
                 price: price,
-            })).slice(-60); 
+            })).slice(-60);
         } else if (historicalData.s !== 'ok') {
             fetchErrors.push(`Historical: API error - ${historicalData.s || 'Finnhub Historical Error'}`);
         } else {
@@ -365,11 +372,11 @@ async function fetchFromTwelveData(
   const result: MarketData = { assetName, timeframe: timeframeId, sourceProvider: 'TwelveData', marketStatus: 'unknown' };
   const interval = mapTimeframeToTwelveDataInterval(timeframeId);
   const baseUrl = 'https://api.twelvedata.com';
-  
+
   const priceUrl = `${baseUrl}/price?symbol=${twelveDataTicker}&apikey=${apiKey}`;
   const rsiUrl = `${baseUrl}/rsi?symbol=${twelveDataTicker}&interval=${interval}&time_period=14&series_type=close&outputsize=1&apikey=${apiKey}`;
   const macdUrl = `${baseUrl}/macd?symbol=${twelveDataTicker}&interval=${interval}&fast_period=12&slow_period=26&signal_period=9&series_type=close&outputsize=1&apikey=${apiKey}`;
-  
+
   const historicalInterval = timeframeId === '5min' ? '5min' : '1day';
   const historicalOutputSize = timeframeId === '5min' ? 120 : 90;
   const historicalUrl = `${baseUrl}/time_series?symbol=${twelveDataTicker}&interval=${historicalInterval}&outputsize=${historicalOutputSize}&apikey=${apiKey}`;
@@ -431,7 +438,7 @@ async function fetchFromTwelveData(
       } else if (macdData.status === 'error') fetchErrors.push(`MACD: API error - ${macdData.message}`);
       else fetchErrors.push('MACD: Data not found/unexpected format.');
     }
-    
+
     // Process Historical Data
     if (!historicalResponse.ok) {
         const errorData = await historicalResponse.json().catch(() => ({ message: `HTTP ${historicalResponse.status}` }));
@@ -448,8 +455,8 @@ async function fetchFromTwelveData(
                     date: format(new Date(v.datetime), dateFormat), // TwelveData datetime is ISO string
                     price: parseFloat(v.close),
                 }))
-                .reverse() 
-                .slice(-60); 
+                .reverse()
+                .slice(-60);
         } else if (historicalData.status === 'error') {
             fetchErrors.push(`Historical: API error - ${historicalData.message}`);
         } else {
@@ -492,23 +499,23 @@ export async function fetchMarketData(
   if (apiKeys.polygon && asset.marketIds.polygon) {
     attemptLog.push("Attempting Polygon.io...");
     marketData = await fetchFromPolygon(asset.marketIds.polygon, asset.name, timeframeId, apiKeys.polygon);
-    const polygonSuccess = marketData.price !== undefined && 
-                           ((marketData.rsi !== undefined && marketData.macd?.value !== undefined) || 
+    const polygonSuccess = marketData.price !== undefined &&
+                           ((marketData.rsi !== undefined && marketData.macd?.value !== undefined) ||
                             (marketData.historical && marketData.historical.length > 0));
 
     if (!marketData.error || polygonSuccess) {
       console.log(`Successfully fetched from Polygon.io for ${asset.name} (${timeframeId}). Market Status: ${marketData.marketStatus}`);
-      if (marketData.error && polygonSuccess) { 
+      if (marketData.error && polygonSuccess) {
         console.warn(`Polygon.io for ${asset.name} (${timeframeId}) had partial data with error: ${marketData.error}`);
-        marketData.error = `Partial data from Polygon.io: ${marketData.error}`; 
+        marketData.error = `Partial data from Polygon.io: ${marketData.error}`;
       } else if (!marketData.error && polygonSuccess){
-        marketData.error = undefined; 
+        marketData.error = undefined;
       }
       return marketData;
     }
     lastError = marketData.error;
     attemptLog.push(`Polygon.io failed: ${lastError}`);
-    if (!marketData.providerSpecificError) { 
+    if (!marketData.providerSpecificError) {
         console.warn(`Polygon.io failed with non-provider specific error for ${asset.name} (${timeframeId}): ${lastError}. Not falling back further for market data.`);
         return marketData;
     }
@@ -520,10 +527,10 @@ export async function fetchMarketData(
   if (apiKeys.finnhub && asset.marketIds.finnhub) {
     attemptLog.push("Attempting Finnhub.io...");
     marketData = await fetchFromFinnhub(asset.marketIds.finnhub, asset.name, timeframeId, apiKeys.finnhub);
-    const finnhubSuccess = marketData.price !== undefined && 
+    const finnhubSuccess = marketData.price !== undefined &&
                            ((marketData.rsi !== undefined && marketData.macd?.value !== undefined) ||
                             (marketData.historical && marketData.historical.length > 0));
-                            
+
     if (!marketData.error || finnhubSuccess) {
       console.log(`Successfully fetched from Finnhub.io for ${asset.name} (${timeframeId})`);
       if (marketData.error && finnhubSuccess) {
@@ -567,9 +574,9 @@ export async function fetchMarketData(
   } else {
     attemptLog.push("Skipping TwelveData (no API key or asset ID).");
   }
-  
+
   console.warn(`All market data providers failed for ${asset.name} (${timeframeId}). Last error: ${lastError}. Attempts: ${attemptLog.join(' | ')}`);
-  
+
   if (!marketData.sourceProvider || marketData.sourceProvider === 'Unknown') {
       marketData.error = lastError || "No API providers configured or all failed for market data.";
       if (attemptLog.includes("Attempting TwelveData...")) marketData.sourceProvider = 'TwelveData';
