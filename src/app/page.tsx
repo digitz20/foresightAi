@@ -107,6 +107,7 @@ const ASSETS: Asset[] = [
 
 
 const TIMEFRAMES = [
+  { id: "5min", name: "5min" },
   { id: "15min", name: "15min" },
   { id: "1H", name: "1H" },
   { id: "4H", name: "4H" },
@@ -535,6 +536,7 @@ export default function HomePage() {
 
     const getIntervalMs = (timeframeId: string): number => {
       switch (timeframeId) {
+        case '5min':  return 30 * 1000;      // 30 seconds for 5min timeframe
         case '15min': return 1 * 60 * 1000;  
         case '1H':    return 5 * 60 * 1000;  
         case '4H':    return 15 * 60 * 1000; 

@@ -41,6 +41,7 @@ export interface MarketData {
 // Helper to map our timeframe IDs to Polygon.io timespan strings for indicators
 function mapTimeframeToPolygonTimespan(timeframeId: string): string {
   switch (timeframeId) {
+    case '5min': return 'minute'; // Polygon uses 'minute' for 1-59 min intervals for indicators
     case '15min': case '1H': case '4H': return 'hour';
     case '1D': return 'day';
     default: return 'hour';
@@ -50,6 +51,7 @@ function mapTimeframeToPolygonTimespan(timeframeId: string): string {
 // Helper to map our timeframe IDs to Finnhub resolution
 function mapTimeframeToFinnhubResolution(timeframeId: string): string {
   switch (timeframeId) {
+    case '5min': return '5';
     case '15min': return '15';
     case '1H': return '60';
     case '4H': return 'D'; // Finnhub may not have 4H, use Daily as fallback
@@ -61,6 +63,7 @@ function mapTimeframeToFinnhubResolution(timeframeId: string): string {
 // Helper to map our timeframe IDs to Twelve Data interval
 function mapTimeframeToTwelveDataInterval(timeframeId: string): string {
   switch (timeframeId) {
+    case '5min': return '5min';
     case '15min': return '15min';
     case '1H': return '1h';
     case '4H': return '4h';
@@ -78,6 +81,12 @@ async function fetchFromPolygon(
 ): Promise<MarketData> {
   const result: MarketData = { assetName, timeframe: timeframeId, sourceProvider: 'Polygon.io' };
   const indicatorTimespan = mapTimeframeToPolygonTimespan(timeframeId);
+  // For historical data, Polygon.io uses specific multiplier/timespan for candles
+  // For '5min' timeframe, we'll fetch 5-minute candles. For others, daily.
+  const historicalMultiplier = timeframeId === '5min' ? 5 : 1;
+  const historicalTimespan = timeframeId === '5min' ? 'minute' : 'day';
+  const historicalLimit = timeframeId === '5min' ? 120 : 90; // More data points for 5min chart over ~10 hours
+
   const baseUrl = 'https://api.polygon.io';
 
   // For Price, RSI, MACD
@@ -85,21 +94,29 @@ async function fetchFromPolygon(
   const rsiUrl = `${baseUrl}/v1/indicators/rsi/${polygonTicker}?timespan=${indicatorTimespan}&adjusted=true&window=14&series_type=close&order=desc&limit=1&apiKey=${apiKey}`;
   const macdUrl = `${baseUrl}/v1/indicators/macd/${polygonTicker}?timespan=${indicatorTimespan}&adjusted=true&short_window=12&long_window=26&signal_window=9&series_type=close&order=desc&limit=1&apiKey=${apiKey}`;
 
-  // For Historical Chart Data (last 60 days, daily)
+  // For Historical Chart Data
   const today = new Date();
-  const fromDate = format(subDays(today, 90), 'yyyy-MM-dd'); // Fetch 90 days to ensure enough points after filtering
+  // Adjust 'from' date based on timeframe for historical data
+  let fromDateHist: Date;
+  if (timeframeId === '5min') {
+    fromDateHist = subDays(today, 2); // ~2 days of 5-min data
+  } else {
+    fromDateHist = subDays(today, 90); // ~90 days of daily data
+  }
+  const fromDate = format(fromDateHist, 'yyyy-MM-dd');
   const toDate = format(today, 'yyyy-MM-dd');
-  const historicalUrl = `${baseUrl}/v2/aggs/ticker/${polygonTicker}/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&limit=120&apiKey=${apiKey}`;
+  const historicalUrl = `${baseUrl}/v2/aggs/ticker/${polygonTicker}/range/${historicalMultiplier}/${historicalTimespan}/${fromDate}/${toDate}?adjusted=true&sort=asc&limit=${historicalLimit}&apiKey=${apiKey}`;
+
 
   let fetchErrors: string[] = [];
   let isKeyOrRateLimitError = false;
 
   try {
     const [priceResponse, rsiResponse, macdResponse, historicalResponse] = await Promise.all([
-      fetch(priceUrl, { next: { revalidate: 300 } }),
-      fetch(rsiUrl, { next: { revalidate: 600 } }),
-      fetch(macdUrl, { next: { revalidate: 600 } }),
-      fetch(historicalUrl, { next: { revalidate: 3600 } }), // Cache historical data longer
+      fetch(priceUrl, { next: { revalidate: 300 } }), // Price revalidates faster
+      fetch(rsiUrl, { next: { revalidate: (timeframeId === '5min' || timeframeId === '15min') ? 300 : 600 } }),
+      fetch(macdUrl, { next: { revalidate: (timeframeId === '5min' || timeframeId === '15min') ? 300 : 600 } }),
+      fetch(historicalUrl, { next: { revalidate: (timeframeId === '5min' || timeframeId === '15min') ? 300 : 3600 } }), // Historical data cache depends on timeframe
     ]);
 
     // Process Price
@@ -159,9 +176,10 @@ async function fetchFromPolygon(
     } else {
         const historicalData = await historicalResponse.json();
         if (historicalData.results) {
+            const dateFormat = timeframeId === '5min' ? 'HH:mm' : 'MMM dd';
             result.historical = historicalData.results
               .map((r: any) => ({
-                date: format(new Date(r.t), 'MMM dd'), // Format date for chart
+                date: format(new Date(r.t), dateFormat), // Format date for chart
                 price: r.c,
               }))
               .slice(-60); // Take last 60 points for a cleaner chart
@@ -178,7 +196,7 @@ async function fetchFromPolygon(
       result.providerSpecificError = isKeyOrRateLimitError || fetchErrors.some(e => e.toLowerCase().includes('api key') || e.toLowerCase().includes('rate limit'));
     }
      if (!result.price && !result.rsi && !result.macd?.value && !result.historical?.length && !result.error) {
-        result.error = `Polygon.io: No market data could be retrieved for ${assetName}. Verify symbol and API key/plan. Timespan: '${indicatorTimespan}'.`;
+        result.error = `Polygon.io: No market data could be retrieved for ${assetName}. Verify symbol and API key/plan. Timespan: '${indicatorTimespan}'. Historical: ${historicalMultiplier}${historicalTimespan}.`;
         result.providerSpecificError = true; // Likely a symbol or config issue with this provider
     }
 
@@ -201,17 +219,26 @@ async function fetchFromFinnhub(
   const result: MarketData = { assetName, timeframe: timeframeId, sourceProvider: 'Finnhub.io' };
   const resolution = mapTimeframeToFinnhubResolution(timeframeId);
   const now = Math.floor(Date.now() / 1000);
-  const daysForIndicator = resolution === 'D' ? 200 : 60; 
+  // Adjust data fetching period for indicators based on resolution
+  let daysForIndicator = 60; // Default for 15min, 1H
+  if (resolution === '5') daysForIndicator = 7; // ~7 days for 5-min indicators
+  else if (resolution === 'D') daysForIndicator = 200; // Longer for daily indicators
+
   const fromTs = now - (daysForIndicator * 24 * 60 * 60); 
 
   const quoteUrl = `https://finnhub.io/api/v1/quote?symbol=${finnhubTicker}&token=${apiKey}`;
   const rsiUrl = `https://finnhub.io/api/v1/indicator?symbol=${finnhubTicker}&resolution=${resolution}&from=${fromTs}&to=${now}&indicator=rsi&timeperiod=14&token=${apiKey}`;
   const macdUrl = `https://finnhub.io/api/v1/indicator?symbol=${finnhubTicker}&resolution=${resolution}&from=${fromTs}&to=${now}&indicator=macd&fastperiod=12&slowperiod=26&signalperiod=9&token=${apiKey}`;
   
-  // Historical data for Finnhub (daily candles for last ~60 trading days)
-  const toDateHistorical = format(new Date(), 'yyyy-MM-dd');
-  const fromDateHistorical = format(subDays(new Date(), 90), 'yyyy-MM-dd'); // Fetch ~90 days
-  const historicalUrl = `https://finnhub.io/api/v1/stock/candle?symbol=${finnhubTicker}&resolution=D&from=${Math.floor(new Date(fromDateHistorical).getTime()/1000)}&to=${Math.floor(new Date(toDateHistorical).getTime()/1000)}&token=${apiKey}`;
+  // Historical data for Finnhub
+  let historicalResolution = 'D'; // Default daily
+  let fromTsHistorical = Math.floor(subDays(new Date(), 90).getTime() / 1000); // Default ~90 days for daily
+  if (timeframeId === '5min') {
+    historicalResolution = '5';
+    fromTsHistorical = Math.floor(subDays(new Date(), 2).getTime() / 1000); // ~2 days for 5-min chart
+  }
+  const toTsHistorical = now;
+  const historicalUrl = `https://finnhub.io/api/v1/stock/candle?symbol=${finnhubTicker}&resolution=${historicalResolution}&from=${fromTsHistorical}&to=${toTsHistorical}&token=${apiKey}`;
 
 
   let fetchErrors: string[] = [];
@@ -220,9 +247,9 @@ async function fetchFromFinnhub(
   try {
     const [quoteResponse, rsiResponse, macdResponse, historicalResponse] = await Promise.all([
         fetch(quoteUrl, { next: { revalidate: 300 } }),
-        fetch(rsiUrl, { next: { revalidate: 600 } }),
-        fetch(macdUrl, { next: { revalidate: 600 } }),
-        fetch(historicalUrl, { next: { revalidate: 3600 } }),
+        fetch(rsiUrl, { next: { revalidate: (resolution === '5' || resolution === '15') ? 300: 600 } }),
+        fetch(macdUrl, { next: { revalidate: (resolution === '5' || resolution === '15') ? 300: 600 } }),
+        fetch(historicalUrl, { next: { revalidate: (historicalResolution === '5' || historicalResolution === '15') ? 300 : 3600 } }),
     ]);
 
     // Process Quote
@@ -281,10 +308,11 @@ async function fetchFromFinnhub(
     } else {
         const historicalData = await historicalResponse.json();
         if (historicalData.s === 'ok' && historicalData.c && historicalData.t) {
+             const dateFormat = historicalResolution === '5' ? 'HH:mm' : 'MMM dd';
              result.historical = historicalData.c.map((price: number, index: number) => ({
-                date: format(new Date(historicalData.t[index] * 1000), 'MMM dd'),
+                date: format(new Date(historicalData.t[index] * 1000), dateFormat),
                 price: price,
-            })).slice(-60);
+            })).slice(-60); // Max 60 points for chart
         } else if (historicalData.s !== 'ok') {
             fetchErrors.push(`Historical: API error - ${historicalData.s || 'Finnhub Historical Error'}`);
         } else {
@@ -298,7 +326,7 @@ async function fetchFromFinnhub(
       result.providerSpecificError = isKeyOrRateLimitError || fetchErrors.some(e => e.toLowerCase().includes('api key') || e.toLowerCase().includes('rate limit'));
     }
      if (!result.price && !result.rsi && !result.macd?.value && !result.historical?.length && !result.error) {
-        result.error = `Finnhub.io: No market data retrieved for ${assetName}. Check symbol/API key. Resolution: '${resolution}'.`;
+        result.error = `Finnhub.io: No market data retrieved for ${assetName}. Check symbol/API key. Resolution: '${resolution}'. Historical: ${historicalResolution}`;
         result.providerSpecificError = true;
     }
 
@@ -324,9 +352,11 @@ async function fetchFromTwelveData(
   const rsiUrl = `${baseUrl}/rsi?symbol=${twelveDataTicker}&interval=${interval}&time_period=14&series_type=close&outputsize=1&apikey=${apiKey}`;
   const macdUrl = `${baseUrl}/macd?symbol=${twelveDataTicker}&interval=${interval}&fast_period=12&slow_period=26&signal_period=9&series_type=close&outputsize=1&apikey=${apiKey}`;
   
-  // Historical data for TwelveData (daily for last ~60 data points)
-  // Twelve Data's 'outputsize' for time_series can be used. Interval '1day'.
-  const historicalUrl = `${baseUrl}/time_series?symbol=${twelveDataTicker}&interval=1day&outputsize=90&apikey=${apiKey}`;
+  // Historical data for TwelveData
+  // For 5min timeframe, fetch '5min' interval; otherwise '1day'.
+  const historicalInterval = timeframeId === '5min' ? '5min' : '1day';
+  const historicalOutputSize = timeframeId === '5min' ? 120 : 90; // Fetch more for 5min
+  const historicalUrl = `${baseUrl}/time_series?symbol=${twelveDataTicker}&interval=${historicalInterval}&outputsize=${historicalOutputSize}&apikey=${apiKey}`;
 
 
   let fetchErrors: string[] = [];
@@ -335,9 +365,9 @@ async function fetchFromTwelveData(
   try {
      const [priceResponse, rsiResponse, macdResponse, historicalResponse] = await Promise.all([
         fetch(priceUrl, { next: { revalidate: 300 } }),
-        fetch(rsiUrl, { next: { revalidate: 600 } }),
-        fetch(macdUrl, { next: { revalidate: 600 } }),
-        fetch(historicalUrl, { next: { revalidate: 3600 } }),
+        fetch(rsiUrl, { next: { revalidate: (interval === '5min' || interval === '15min') ? 300 : 600 } }),
+        fetch(macdUrl, { next: { revalidate: (interval === '5min' || interval === '15min') ? 300 : 600 } }),
+        fetch(historicalUrl, { next: { revalidate: (historicalInterval === '5min' || historicalInterval === '15min') ? 300 : 3600 } }),
     ]);
 
     // Process Price
@@ -396,13 +426,14 @@ async function fetchFromTwelveData(
     } else {
         const historicalData = await historicalResponse.json();
         if (historicalData.values) {
+             const dateFormat = historicalInterval === '5min' ? 'HH:mm' : 'MMM dd';
              result.historical = historicalData.values
                 .map((v: any) => ({
-                    date: format(new Date(v.datetime), 'MMM dd'),
+                    date: format(new Date(v.datetime), dateFormat),
                     price: parseFloat(v.close),
                 }))
                 .reverse() // TwelveData often returns newest first, so reverse for charting
-                .slice(-60);
+                .slice(-60); // Max 60 points
         } else if (historicalData.status === 'error') {
             fetchErrors.push(`Historical: API error - ${historicalData.message}`);
         } else {
@@ -416,7 +447,7 @@ async function fetchFromTwelveData(
       result.providerSpecificError = isKeyOrRateLimitError || fetchErrors.some(e => e.toLowerCase().includes('api key') || e.toLowerCase().includes('limit'));
     }
     if (!result.price && !result.rsi && !result.macd?.value && !result.historical?.length && !result.error) {
-        result.error = `TwelveData: No market data retrieved for ${assetName}. Check symbol/API key. Interval: '${interval}'.`;
+        result.error = `TwelveData: No market data retrieved for ${assetName}. Check symbol/API key. Interval: '${interval}'. Historical: ${historicalInterval}.`;
         result.providerSpecificError = true;
     }
 
@@ -452,9 +483,9 @@ export async function fetchMarketData(
                             (marketData.historical && marketData.historical.length > 0));
 
     if (!marketData.error || polygonSuccess) {
-      console.log(`Successfully fetched from Polygon.io for ${asset.name}`);
+      console.log(`Successfully fetched from Polygon.io for ${asset.name} (${timeframeId})`);
       if (marketData.error && polygonSuccess) { // Partial success
-        console.warn(`Polygon.io for ${asset.name} had partial data with error: ${marketData.error}`);
+        console.warn(`Polygon.io for ${asset.name} (${timeframeId}) had partial data with error: ${marketData.error}`);
         marketData.error = `Partial data from Polygon.io: ${marketData.error}`; // Keep error for info
       } else {
         marketData.error = undefined; // Clear error on full success
@@ -464,7 +495,7 @@ export async function fetchMarketData(
     lastError = marketData.error;
     attemptLog.push(`Polygon.io failed: ${lastError}`);
     if (!marketData.providerSpecificError) { 
-        console.warn(`Polygon.io failed with non-provider specific error for ${asset.name}: ${lastError}. Not falling back further for market data.`);
+        console.warn(`Polygon.io failed with non-provider specific error for ${asset.name} (${timeframeId}): ${lastError}. Not falling back further for market data.`);
         return marketData;
     }
   } else {
@@ -480,9 +511,9 @@ export async function fetchMarketData(
                             (marketData.historical && marketData.historical.length > 0));
                             
     if (!marketData.error || finnhubSuccess) {
-      console.log(`Successfully fetched from Finnhub.io for ${asset.name}`);
+      console.log(`Successfully fetched from Finnhub.io for ${asset.name} (${timeframeId})`);
       if (marketData.error && finnhubSuccess) {
-        console.warn(`Finnhub.io for ${asset.name} had partial data with error: ${marketData.error}`);
+        console.warn(`Finnhub.io for ${asset.name} (${timeframeId}) had partial data with error: ${marketData.error}`);
         marketData.error = `Partial data from Finnhub.io: ${marketData.error}`;
       } else {
         marketData.error = undefined;
@@ -492,7 +523,7 @@ export async function fetchMarketData(
     lastError = marketData.error;
     attemptLog.push(`Finnhub.io failed: ${lastError}`);
     if (!marketData.providerSpecificError) {
-        console.warn(`Finnhub.io failed with non-provider specific error for ${asset.name}: ${lastError}. Not falling back further for market data.`);
+        console.warn(`Finnhub.io failed with non-provider specific error for ${asset.name} (${timeframeId}): ${lastError}. Not falling back further for market data.`);
         return marketData;
     }
   } else {
@@ -508,9 +539,9 @@ export async function fetchMarketData(
                                (marketData.historical && marketData.historical.length > 0));
 
     if (!marketData.error || twelveDataSuccess) {
-      console.log(`Successfully fetched from TwelveData for ${asset.name}`);
+      console.log(`Successfully fetched from TwelveData for ${asset.name} (${timeframeId})`);
        if (marketData.error && twelveDataSuccess) {
-        console.warn(`TwelveData for ${asset.name} had partial data with error: ${marketData.error}`);
+        console.warn(`TwelveData for ${asset.name} (${timeframeId}) had partial data with error: ${marketData.error}`);
         marketData.error = `Partial data from TwelveData: ${marketData.error}`;
       } else {
         marketData.error = undefined;
@@ -524,7 +555,7 @@ export async function fetchMarketData(
     attemptLog.push("Skipping TwelveData (no API key or asset ID).");
   }
   
-  console.warn(`All market data providers failed for ${asset.name}. Last error: ${lastError}. Attempts: ${attemptLog.join(' | ')}`);
+  console.warn(`All market data providers failed for ${asset.name} (${timeframeId}). Last error: ${lastError}. Attempts: ${attemptLog.join(' | ')}`);
   
   // If all fallbacks failed, return the last known marketData object, which will contain the last error
   // or a generic error if no providers were even attempted.
