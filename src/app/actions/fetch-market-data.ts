@@ -115,6 +115,7 @@ async function fetchFromPolygon(
     ]);
 
     // Process Snapshot for Market Status
+    const snapshot404ErrorMessage = `Market status snapshot unavailable for ${polygonTicker} (404).`;
     if (snapshotResponse.ok) {
         const snapshotData = await snapshotResponse.json();
         if (snapshotData.ticker && snapshotData.ticker.marketStatus) {
@@ -128,12 +129,11 @@ async function fetchFromPolygon(
          if (snapshotData.ticker && snapshotData.ticker.updated) { // Use updated if lastTrade.t is missing
             if(!result.lastTradeTimestamp) result.lastTradeTimestamp = snapshotData.ticker.updated;
         }
-
     } else {
         const errorText = await snapshotResponse.text();
         let snapshotErrorDetail = `Snapshot API Error ${snapshotResponse.status}: ${errorText.substring(0,50)}`;
         if (snapshotResponse.status === 404) {
-             snapshotErrorDetail = `Market status snapshot unavailable for ${polygonTicker} (404).`;
+             snapshotErrorDetail = snapshot404ErrorMessage;
              // For a 404 on snapshot, we don't necessarily flag it as a key/rate limit issue for the whole provider
         } else {
             if (snapshotResponse.status === 401 || snapshotResponse.status === 403) isKeyOrRateLimitError = true;
@@ -220,14 +220,36 @@ async function fetchFromPolygon(
         }
     }
 
+    // Refined error reporting
+    const essentialDataFetched = result.price !== undefined || 
+                                 (result.rsi !== undefined && result.macd?.value !== undefined) || 
+                                 (result.historical && result.historical.length > 0);
+    
+    const isOnlySnapshot404Error = fetchErrors.length === 1 && fetchErrors[0] === snapshot404ErrorMessage;
+
     if (fetchErrors.length > 0) {
-      result.error = `Polygon.io: ${fetchErrors.join('; ')}`;
-      result.providerSpecificError = isKeyOrRateLimitError || fetchErrors.some(e => e.toLowerCase().includes('api key') || e.toLowerCase().includes('rate limit'));
+        if (isOnlySnapshot404Error && essentialDataFetched) {
+            console.warn(`Polygon.io: Snapshot for ${polygonTicker} returned 404, but other data was fetched.`);
+            result.error = undefined; // No blocking error if only snapshot failed and other data is present
+            result.providerSpecificError = false; // Not a provider error if main data is fine
+        } else {
+            result.error = `Polygon.io: ${fetchErrors.join('; ')}`;
+            // A providerSpecificError is true if there's a key/rate limit issue, or other non-snapshot API errors
+            result.providerSpecificError = isKeyOrRateLimitError || fetchErrors.some(
+                e => e.toLowerCase().includes('api key') ||
+                     e.toLowerCase().includes('rate limit') ||
+                     e.toLowerCase().includes('unauthorized') ||
+                     (e !== snapshot404ErrorMessage && (e.includes('API Error') || e.includes('API error') || e.includes('Data not found/unexpected format')))
+            );
+        }
     }
-     if (!result.price && !result.rsi && !result.macd?.value && !result.historical?.length && !result.error) {
+    
+    // Final check if no data was retrieved at all, despite no specific fetchErrors (e.g., all 200 OK but empty responses)
+    if (!essentialDataFetched && !result.error) {
         result.error = `Polygon.io: No market data could be retrieved for ${assetName}. Verify symbol and API key/plan. Timespan: '${indicatorTimespan}'. Historical: ${historicalMultiplier}${historicalTimespan}.`;
         result.providerSpecificError = true;
     }
+
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -499,29 +521,39 @@ export async function fetchMarketData(
   if (apiKeys.polygon && asset.marketIds.polygon) {
     attemptLog.push("Attempting Polygon.io...");
     marketData = await fetchFromPolygon(asset.marketIds.polygon, asset.name, timeframeId, apiKeys.polygon);
-    const polygonSuccess = marketData.price !== undefined &&
-                           ((marketData.rsi !== undefined && marketData.macd?.value !== undefined) ||
-                            (marketData.historical && marketData.historical.length > 0));
+    
+    // Check if essential data was fetched, even if there was a non-blocking error (like snapshot 404)
+    const essentialPolygonDataFetched = marketData.price !== undefined ||
+                                     (marketData.rsi !== undefined && marketData.macd?.value !== undefined) ||
+                                     (marketData.historical && marketData.historical.length > 0);
 
-    if (!marketData.error || polygonSuccess) {
+    if (essentialPolygonDataFetched && !marketData.error) { // Successfully fetched all (or all essential with only benign snapshot error)
       console.log(`Successfully fetched from Polygon.io for ${asset.name} (${timeframeId}). Market Status: ${marketData.marketStatus}`);
-      if (marketData.error && polygonSuccess) {
-        console.warn(`Polygon.io for ${asset.name} (${timeframeId}) had partial data with error: ${marketData.error}`);
-        marketData.error = `Partial data from Polygon.io: ${marketData.error}`;
-      } else if (!marketData.error && polygonSuccess){
-        marketData.error = undefined;
-      }
-      return marketData;
+      return marketData; // marketData.error is already undefined or correctly handled in fetchFromPolygon
     }
-    lastError = marketData.error;
-    attemptLog.push(`Polygon.io failed: ${lastError}`);
-    if (!marketData.providerSpecificError) {
-        console.warn(`Polygon.io failed with non-provider specific error for ${asset.name} (${timeframeId}): ${lastError}. Not falling back further for market data.`);
-        return marketData;
+    
+    // If there was an error (and it wasn't a benign snapshot error handled above) OR essential data is missing
+    if (marketData.error || !essentialPolygonDataFetched) {
+        lastError = marketData.error || `Polygon.io: Essential data missing for ${asset.name}.`;
+        attemptLog.push(`Polygon.io failed: ${lastError}`);
+        // If the error is not provider-specific (e.g. general network error, not API key/rate limit), or if data is just missing without specific provider error
+        // we might not want to fall back. fetchFromPolygon sets providerSpecificError.
+        if (!marketData.providerSpecificError) {
+            console.warn(`Polygon.io failed with non-provider specific error for ${asset.name} (${timeframeId}): ${lastError}. Not falling back further for market data.`);
+            // If it's not provider specific, but we do have partial data, we might want to return it.
+            // If essentialPolygonDataFetched is true but there was some other error, it implies partial data.
+            if (essentialPolygonDataFetched && marketData.error) {
+                 marketData.error = `Partial data from Polygon.io: ${marketData.error}`;
+                 return marketData;
+            }
+            return marketData; // Return whatever was fetched, with the error
+        }
+        // If it IS a providerSpecificError, we continue to the next provider
     }
   } else {
     attemptLog.push("Skipping Polygon.io (no API key or asset ID).");
   }
+
 
   // Provider 2: Finnhub.io
   if (apiKeys.finnhub && asset.marketIds.finnhub) {
@@ -571,20 +603,27 @@ export async function fetchMarketData(
     }
     lastError = marketData.error;
     attemptLog.push(`TwelveData failed: ${lastError}`);
+     // No need to check providerSpecificError for the last provider in the chain
   } else {
     attemptLog.push("Skipping TwelveData (no API key or asset ID).");
   }
 
   console.warn(`All market data providers failed for ${asset.name} (${timeframeId}). Last error: ${lastError}. Attempts: ${attemptLog.join(' | ')}`);
 
-  if (!marketData.sourceProvider || marketData.sourceProvider === 'Unknown') {
-      marketData.error = lastError || "No API providers configured or all failed for market data.";
-      if (attemptLog.includes("Attempting TwelveData...")) marketData.sourceProvider = 'TwelveData';
-      else if (attemptLog.includes("Attempting Finnhub.io...")) marketData.sourceProvider = 'Finnhub.io';
-      else if (attemptLog.includes("Attempting Polygon.io...")) marketData.sourceProvider = 'Polygon.io';
-      else marketData.sourceProvider = 'Unknown';
+  // If marketData still has default sourceProvider or is Unknown, means all attempts failed or were skipped.
+  // Set the error to the last known error, or a generic message.
+  if (marketData.sourceProvider === 'Unknown' || !marketData.sourceProvider) {
+       marketData.error = lastError || "No API providers configured or all failed for market data.";
+      // Try to determine the last attempted provider if possible, otherwise keep Unknown
+      if (attemptLog.filter(log => log.startsWith("Attempting")).length > 0) {
+          const lastAttempt = attemptLog.filter(log => log.startsWith("Attempting")).pop();
+          if (lastAttempt?.includes("Polygon.io")) marketData.sourceProvider = 'Polygon.io';
+          else if (lastAttempt?.includes("Finnhub.io")) marketData.sourceProvider = 'Finnhub.io';
+          else if (lastAttempt?.includes("TwelveData")) marketData.sourceProvider = 'TwelveData';
+      }
   }
   if(!marketData.marketStatus) marketData.marketStatus = 'unknown'; // Ensure it's always set
 
   return marketData;
 }
+
