@@ -12,7 +12,7 @@ import TechnicalIndicatorsCard, {
 } from '@/components/dashboard/TechnicalIndicatorsCard';
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard, { type EconomicIndicatorData as FetchedEconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
-import ChartAnalyzerCard, { type LiveDataForChartAnalysis } from '@/components/dashboard/ChartAnalyzerCard'; // Removed ChartAnalysisInputProps as it's internal to the card now
+import ChartAnalyzerCard, { type LiveDataForChartAnalysis } from '@/components/dashboard/ChartAnalyzerCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark, XCircle } from 'lucide-react';
@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 
 import { generateTradeRecommendation, GenerateTradeRecommendationInput, GenerateTradeRecommendationOutput } from '@/ai/flows/generate-trade-recommendation';
 import { summarizeNewsSentiment, SummarizeNewsSentimentInput, SummarizeNewsSentimentOutput } from '@/ai/flows/summarize-news-sentiment';
-import { analyzeChartImage, AnalyzeChartImageInput, AnalyzeChartImageOutput } from '@/ai/flows/analyze-chart-image-flow';
+import { analyzeChartImage, AnalyzeChartImageInput, AnalyzeChartImageOutput } from '@/ai/flows/analyze-chart-image-flow.ts';
 
 
 import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
@@ -919,3 +919,4 @@ export default function HomePage() {
     </div>
   );
 }
+
