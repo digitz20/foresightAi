@@ -12,14 +12,17 @@ import TechnicalIndicatorsCard, {
 } from '@/components/dashboard/TechnicalIndicatorsCard';
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard, { type EconomicIndicatorData as FetchedEconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
+import ChartAnalyzerCard, { type LiveDataForChartAnalysis } from '@/components/dashboard/ChartAnalyzerCard'; // Removed ChartAnalysisInputProps as it's internal to the card now
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark, XCircle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from "@/hooks/use-toast";
 
 import { generateTradeRecommendation, GenerateTradeRecommendationInput, GenerateTradeRecommendationOutput } from '@/ai/flows/generate-trade-recommendation';
 import { summarizeNewsSentiment, SummarizeNewsSentimentInput, SummarizeNewsSentimentOutput } from '@/ai/flows/summarize-news-sentiment';
+import { analyzeChartImage, AnalyzeChartImageInput, AnalyzeChartImageOutput } from '@/ai/flows/analyze-chart-image-flow';
+
 
 import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData } from '@/app/actions/fetch-economic-data';
@@ -129,6 +132,10 @@ const ASSETS: Asset[] = [
 
 
 const TIMEFRAMES = [
+  { id: "1min", name: "1min" },
+  { id: "2min", name: "2min" },
+  { id: "3min", name: "3min" },
+  { id: "4min", name: "4min" },
   { id: "5min", name: "5min" },
   { id: "15min", name: "15min" },
   { id: "1H", name: "1H" },
@@ -185,20 +192,19 @@ async function fetchCombinedDataForAsset(
   technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; 
   economicIndicatorData?: FetchedEconomicIndicatorData; 
   fetchedInterestRateData?: InterestRateData; 
+  liveDataForChartAnalysis?: LiveDataForChartAnalysis;
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
   let tradeRecommendation: GenerateTradeRecommendationOutput | null = null;
   
   try {
-    // Fetch market data first as it includes marketStatus
     const marketApiDataPromise = fetchMarketData(asset, timeframeId, {
       polygon: apiKeys.polygon,
       finnhub: apiKeys.finnhub,
       twelvedata: apiKeys.twelvedata,
     });
 
-    // Fetch other data in parallel
     const economicApiDataPromise = fetchEconomicData(asset, {
       openExchangeRates: apiKeys.openExchangeRates,
       exchangeRateApi: apiKeys.exchangeRateApi,
@@ -216,7 +222,6 @@ async function fetchCombinedDataForAsset(
         interestRatePromise = Promise.resolve({ error: `Asset ${asset.name} not configured for FRED interest rate fetching.`, sourceProvider: 'FRED' });
     }
 
-    // Await all data fetching
     const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData] = await Promise.all([
         marketApiDataPromise, 
         economicApiDataPromise, 
@@ -257,7 +262,6 @@ async function fetchCombinedDataForAsset(
     const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: asset.name, newsHeadlines: headlinesForSentiment };
     const newsSentiment = await summarizeNewsSentiment(newsSentimentInput);
 
-    // Check market status *after* all data is fetched, before deciding on AI call
     if (marketApiData.marketStatus === 'closed') {
         tradeRecommendation = {
             recommendation: 'HOLD',
@@ -265,20 +269,16 @@ async function fetchCombinedDataForAsset(
             error: undefined,
         };
     } else if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
-        // Critical market data error, prevent AI call
         tradeRecommendation = { 
             recommendation: 'HOLD', 
             reason: `Market data unavailable: ${marketApiData.error}`, 
             error: marketApiData.error 
         };
     } else {
-        // Market is open (or status is not 'closed'), and essential data seems available
         const currentPrice = marketApiData.price ?? (asset.type === 'crypto' ? 60000 : asset.type === 'commodity' ? (asset.name.includes("XAU") ? 2300 : (asset.name.includes("XAG") ? 25 : (asset.name.includes("Oil") ? 75 : 100) )) : 1.1);
         const rsiValue = marketApiData.rsi ?? 50;
         const macdValue = marketApiData.macd?.value ?? 0;
-        
         const derivedSentimentScore = newsSentiment?.sentimentScore ?? 0.0;
-
         let derivedInterestRate: number;
         if (fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
             derivedInterestRate = fetchedInterestRateData.rate;
@@ -312,7 +312,7 @@ async function fetchCombinedDataForAsset(
           sentimentScore: parseFloat(derivedSentimentScore.toFixed(2)), 
           interestRate: parseFloat(derivedInterestRate.toFixed(2)), 
           price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") || asset.type === "crypto" ? 2 : 4)),
-          marketStatus: marketApiData.marketStatus // Pass actual market status
+          marketStatus: marketApiData.marketStatus
         };
         tradeRecommendation = await generateTradeRecommendation(tradeRecommendationInput);
     }
@@ -331,10 +331,20 @@ async function fetchCombinedDataForAsset(
     if (economicApiData.error) finalErrors.push(`Economic: ${economicApiData.error}`);
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) finalErrors.push(`News: ${fetchedNewsData.error}`);
     if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
-    if (tradeRecommendation && tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`); // Check if tradeRec exists
+    if (tradeRecommendation && tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) finalErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
 
     const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
+
+    const liveDataForChart: LiveDataForChartAnalysis = {
+      price: marketApiData.price,
+      rsi: marketApiData.rsi,
+      macdValue: marketApiData.macd?.value,
+      sentimentScore: newsSentiment?.sentimentScore,
+      interestRate: fetchedInterestRateData?.rate,
+      marketStatus: marketApiData.marketStatus,
+    };
+
 
     return {
         tradeRecommendation,
@@ -343,6 +353,7 @@ async function fetchCombinedDataForAsset(
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
         fetchedInterestRateData,
+        liveDataForChartAnalysis: liveDataForChart,
         combinedError: finalCombinedError || combinedError
     };
 
@@ -364,6 +375,7 @@ async function fetchCombinedDataForAsset(
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },
         fetchedInterestRateData: { error: finalCombinedError, sourceProvider: 'FRED'},
+        liveDataForChartAnalysis: {},
         combinedError: finalCombinedError
     };
   }
@@ -371,7 +383,7 @@ async function fetchCombinedDataForAsset(
 
 export default function HomePage() {
   const [selectedAsset, setSelectedAsset] = useState<Asset>(ASSETS[0]);
-  const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[0]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[4]);
   
   const [aiData, setAiData] = useState<{
     tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -380,6 +392,7 @@ export default function HomePage() {
     technicalIndicatorsData?: ProcessedTechnicalIndicatorsData;
     economicIndicatorData?: FetchedEconomicIndicatorData;
     fetchedInterestRateData?: InterestRateData;
+    liveDataForChartAnalysis?: LiveDataForChartAnalysis;
     combinedError?: string;
   } | null>(null);
 
@@ -574,6 +587,10 @@ export default function HomePage() {
 
     const getIntervalMs = (timeframeId: string): number => {
       switch (timeframeId) {
+        case '1min':  return 15 * 1000;      
+        case '2min':  return 20 * 1000;      
+        case '3min':  return 25 * 1000;      
+        case '4min':  return 30 * 1000;      
         case '5min':  return 30 * 1000;      
         case '15min': return 1 * 60 * 1000;  
         case '1H':    return 5 * 60 * 1000;  
@@ -841,6 +858,7 @@ export default function HomePage() {
             <div className="lg:col-span-1">{renderCardSkeleton("h-[350px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
+            <div className="lg:col-span-3">{renderCardSkeleton("h-[400px]")}</div>
           </div>
         ) : aiData && !isKeySetupPhase ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -872,6 +890,16 @@ export default function HomePage() {
                  key={`${selectedAsset.name}-${selectedTimeframe.id}-econ`}
               />
             </div>
+            {isAnyMarketKeySet && (
+                 <div className="lg:col-span-3">
+                    <ChartAnalyzerCard 
+                        selectedAsset={selectedAsset}
+                        selectedTimeframe={selectedTimeframe}
+                        liveData={aiData.liveDataForChartAnalysis}
+                        onAnalyzeChart={analyzeChartImage}
+                    />
+                </div>
+            )}
           </div>
         ) : !isKeySetupPhase && !isLoading ? ( 
              <div className="text-center py-10">
@@ -891,4 +919,3 @@ export default function HomePage() {
     </div>
   );
 }
-
