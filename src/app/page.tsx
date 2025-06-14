@@ -188,13 +188,17 @@ async function fetchCombinedDataForAsset(
   combinedError?: string;
 }> {
   let combinedError: string | undefined;
+  let tradeRecommendation: GenerateTradeRecommendationOutput | null = null;
   
   try {
+    // Fetch market data first as it includes marketStatus
     const marketApiDataPromise = fetchMarketData(asset, timeframeId, {
       polygon: apiKeys.polygon,
       finnhub: apiKeys.finnhub,
       twelvedata: apiKeys.twelvedata,
     });
+
+    // Fetch other data in parallel
     const economicApiDataPromise = fetchEconomicData(asset, {
       openExchangeRates: apiKeys.openExchangeRates,
       exchangeRateApi: apiKeys.exchangeRateApi,
@@ -212,7 +216,7 @@ async function fetchCombinedDataForAsset(
         interestRatePromise = Promise.resolve({ error: `Asset ${asset.name} not configured for FRED interest rate fetching.`, sourceProvider: 'FRED' });
     }
 
-
+    // Await all data fetching
     const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData] = await Promise.all([
         marketApiDataPromise, 
         economicApiDataPromise, 
@@ -221,23 +225,12 @@ async function fetchCombinedDataForAsset(
     ]);
     
     let dataErrors: string[] = [];
-
-    if (marketApiData.error) {
-      dataErrors.push(`Market Data (${marketApiData.sourceProvider || 'Unknown'}): ${marketApiData.error}`);
-    }
-    if (economicApiData.error) {
-      dataErrors.push(`Economic Data (${economicApiData.sourceProvider || 'Unknown'}): ${economicApiData.error}`);
-    }
-    if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) {
-        dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
-    }
-    if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) {
-        dataErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
-    }
+    if (marketApiData.error) dataErrors.push(`Market Data (${marketApiData.sourceProvider || 'Unknown'}): ${marketApiData.error}`);
+    if (economicApiData.error) dataErrors.push(`Economic Data (${economicApiData.sourceProvider || 'Unknown'}): ${economicApiData.error}`);
+    if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
+    if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) dataErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
     
-    if (dataErrors.length > 0) {
-        combinedError = dataErrors.join('; ');
-    }
+    if (dataErrors.length > 0) combinedError = dataErrors.join('; ');
     
     const rsi: RsiData = {
       value: marketApiData.rsi,
@@ -264,70 +257,65 @@ async function fetchCombinedDataForAsset(
     const newsSentimentInput: SummarizeNewsSentimentInput = { currencyPair: asset.name, newsHeadlines: headlinesForSentiment };
     const newsSentiment = await summarizeNewsSentiment(newsSentimentInput);
 
-
-    if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
-         return {
-            tradeRecommendation: { recommendation: 'HOLD', reason: `Market data unavailable: ${marketApiData.error}`, error: marketApiData.error },
-            newsSentiment: newsSentiment, 
-            marketOverviewData: { ...marketApiData, error: marketApiData.error, sourceProvider: marketApiData.sourceProvider, marketStatus: marketApiData.marketStatus || 'unknown' }, 
-            technicalIndicatorsData: processedTechIndicators,
-            economicIndicatorData: { 
-                indicatorName: economicApiData.indicatorName || 'N/A', 
-                value: economicApiData.value || 'N/A', 
-                sourceProvider: economicApiData.sourceProvider || 'N/A',
-                comparisonCurrency: economicApiData.comparisonCurrency,
-                lastUpdated: economicApiData.lastUpdated,
-                error: economicApiData.error || combinedError 
-            },
-            fetchedInterestRateData,
-            combinedError,
+    // Check market status *after* all data is fetched, before deciding on AI call
+    if (marketApiData.marketStatus === 'closed') {
+        tradeRecommendation = {
+            recommendation: 'HOLD',
+            reason: 'Market is currently closed. Live trading signal generation is paused.',
+            error: undefined,
         };
-    }
-
-    const currentPrice = marketApiData.price ?? (asset.type === 'crypto' ? 60000 : asset.type === 'commodity' ? (asset.name.includes("XAU") ? 2300 : (asset.name.includes("XAG") ? 25 : (asset.name.includes("Oil") ? 75 : 100) )) : 1.1);
-    const rsiValue = marketApiData.rsi ?? 50;
-    const macdValue = marketApiData.macd?.value ?? 0;
-    
-    const derivedSentimentScore = newsSentiment?.sentimentScore ?? 0.0;
-
-    let derivedInterestRate: number;
-    if (fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
-        derivedInterestRate = fetchedInterestRateData.rate;
+    } else if (marketApiData.error && !marketApiData.price && !marketApiData.rsi && !marketApiData.macd?.value) {
+        // Critical market data error, prevent AI call
+        tradeRecommendation = { 
+            recommendation: 'HOLD', 
+            reason: `Market data unavailable: ${marketApiData.error}`, 
+            error: marketApiData.error 
+        };
     } else {
-        const primaryCurrencyForRate = asset.economicIds.primaryCurrencyForInterestRate?.toUpperCase();
-        switch (primaryCurrencyForRate) {
-            case 'EUR': derivedInterestRate = 0.5; break;
-            case 'USD': derivedInterestRate = 1.0; break;
-            case 'GBP': derivedInterestRate = 0.75; break;
-            case 'JPY': derivedInterestRate = -0.1; break;
-            case 'AUD': derivedInterestRate = 0.8; break;
-            case 'CAD': derivedInterestRate = 0.9; break;
-            case 'CHF': derivedInterestRate = 0.25; break;
-            case 'NZD': derivedInterestRate = 0.85; break;
-            case 'SGD': derivedInterestRate = 0.6; break; 
-            default: derivedInterestRate = 0.25; 
+        // Market is open (or status is not 'closed'), and essential data seems available
+        const currentPrice = marketApiData.price ?? (asset.type === 'crypto' ? 60000 : asset.type === 'commodity' ? (asset.name.includes("XAU") ? 2300 : (asset.name.includes("XAG") ? 25 : (asset.name.includes("Oil") ? 75 : 100) )) : 1.1);
+        const rsiValue = marketApiData.rsi ?? 50;
+        const macdValue = marketApiData.macd?.value ?? 0;
+        
+        const derivedSentimentScore = newsSentiment?.sentimentScore ?? 0.0;
+
+        let derivedInterestRate: number;
+        if (fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
+            derivedInterestRate = fetchedInterestRateData.rate;
+        } else {
+            const primaryCurrencyForRate = asset.economicIds.primaryCurrencyForInterestRate?.toUpperCase();
+            switch (primaryCurrencyForRate) {
+                case 'EUR': derivedInterestRate = 0.5; break;
+                case 'USD': derivedInterestRate = 1.0; break;
+                case 'GBP': derivedInterestRate = 0.75; break;
+                case 'JPY': derivedInterestRate = -0.1; break;
+                case 'AUD': derivedInterestRate = 0.8; break;
+                case 'CAD': derivedInterestRate = 0.9; break;
+                case 'CHF': derivedInterestRate = 0.25; break;
+                case 'NZD': derivedInterestRate = 0.85; break;
+                case 'SGD': derivedInterestRate = 0.6; break; 
+                default: derivedInterestRate = 0.25; 
+            }
+            if (asset.type === 'commodity' || asset.type === 'crypto') {
+               derivedInterestRate = 0.25; 
+               if(asset.economicIds.primaryCurrencyForInterestRate === 'USD' && fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
+                  derivedInterestRate = fetchedInterestRateData.rate; 
+               } else if (asset.economicIds.primaryCurrencyForInterestRate === 'USD') {
+                  derivedInterestRate = 1.0; 
+               }
+            }
         }
-        if (asset.type === 'commodity' || asset.type === 'crypto') {
-           derivedInterestRate = 0.25; 
-           if(asset.economicIds.primaryCurrencyForInterestRate === 'USD' && fetchedInterestRateData.rate !== undefined && !fetchedInterestRateData.error) {
-              derivedInterestRate = fetchedInterestRateData.rate; 
-           } else if (asset.economicIds.primaryCurrencyForInterestRate === 'USD') {
-              derivedInterestRate = 1.0; 
-           }
-        }
+
+        const tradeRecommendationInput: GenerateTradeRecommendationInput = {
+          rsi: parseFloat(rsiValue.toFixed(2)),
+          macd: parseFloat(macdValue.toFixed(4)),
+          sentimentScore: parseFloat(derivedSentimentScore.toFixed(2)), 
+          interestRate: parseFloat(derivedInterestRate.toFixed(2)), 
+          price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") || asset.type === "crypto" ? 2 : 4)),
+          marketStatus: marketApiData.marketStatus // Pass actual market status
+        };
+        tradeRecommendation = await generateTradeRecommendation(tradeRecommendationInput);
     }
-
-
-    const tradeRecommendationInput: GenerateTradeRecommendationInput = {
-      rsi: parseFloat(rsiValue.toFixed(2)),
-      macd: parseFloat(macdValue.toFixed(4)),
-      sentimentScore: parseFloat(derivedSentimentScore.toFixed(2)), 
-      interestRate: parseFloat(derivedInterestRate.toFixed(2)), 
-      price: parseFloat(currentPrice.toFixed(asset.name.includes("JPY") || asset.name.includes("XAU") || asset.name.includes("XAG") || asset.name.includes("Oil") || asset.type === "crypto" ? 2 : 4)),
-      marketStatus: marketApiData.marketStatus
-    };
-
-    const tradeRecommendation = await generateTradeRecommendation(tradeRecommendationInput);
     
     const finalEconomicData: FetchedEconomicIndicatorData = {
         indicatorName: economicApiData.indicatorName,
@@ -343,7 +331,7 @@ async function fetchCombinedDataForAsset(
     if (economicApiData.error) finalErrors.push(`Economic: ${economicApiData.error}`);
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) finalErrors.push(`News: ${fetchedNewsData.error}`);
     if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
-    if (tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
+    if (tradeRecommendation && tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`); // Check if tradeRec exists
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) finalErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
 
     const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
@@ -903,3 +891,4 @@ export default function HomePage() {
     </div>
   );
 }
+
