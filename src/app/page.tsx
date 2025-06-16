@@ -13,9 +13,10 @@ import TechnicalIndicatorsCard, {
 import SentimentAnalysisCard from '@/components/dashboard/SentimentAnalysisCard';
 import EconomicIndicatorCard, { type EconomicIndicatorData as FetchedEconomicIndicatorData } from '@/components/dashboard/EconomicIndicatorCard';
 import ChartAnalyzerCard, { type LiveDataForChartAnalysis } from '@/components/dashboard/ChartAnalyzerCard';
+import EconomicCalendarCard from '@/components/dashboard/EconomicCalendarCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark, XCircle } from 'lucide-react';
+import { RefreshCw, Loader2, Clock, AlertTriangle, Info, KeyRound, Eye, EyeOff, PlayCircle, PauseCircle, Landmark, XCircle, CalendarDays } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from "@/hooks/use-toast";
 
@@ -28,6 +29,7 @@ import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData } from '@/app/actions/fetch-economic-data';
 import { fetchNewsHeadlines, NewsHeadlinesResult } from '@/app/actions/fetch-news-headlines';
 import { fetchInterestRate, InterestRateData } from '@/app/actions/fetch-interest-rate';
+import { fetchEconomicEvents, EconomicEvent } from '@/app/actions/fetch-economic-events';
 
 
 interface Asset {
@@ -150,6 +152,7 @@ const DEFAULT_OPEN_EXCHANGE_RATES_KEY = '23ea9d3f2b64490cb54e23b4c2b50133';
 const DEFAULT_EXCHANGERATE_API_KEY = 'd30c5b3ab75049fb4f361d6d';
 const DEFAULT_NEWSAPI_KEY = 'd2412348368f4a3ea431d8704ca200fc';
 const DEFAULT_FRED_KEY = '31d90da534e6f5269237979b7ff11e13';
+const DEFAULT_TRADAYS_KEY = 'YOUR_TRADAYS_API_KEY_HERE'; // Replace with actual or guide user
 
 
 const getRsiStatus = (rsiValue?: number): string => {
@@ -173,7 +176,7 @@ const getMacdStatus = (macdData?: { value?: number; signal?: number; histogram?:
 };
 
 
-async function fetchCombinedDataForAsset(
+async function fetchAllDashboardData(
   asset: Asset, 
   timeframeId: string,
   apiKeys: { 
@@ -184,6 +187,7 @@ async function fetchCombinedDataForAsset(
     exchangeRateApi?: string | null;
     newsApi?: string | null; 
     fred?: string | null;
+    tradays?: string | null;
   }
 ): Promise<{
   tradeRecommendation: GenerateTradeRecommendationOutput | null;
@@ -192,6 +196,8 @@ async function fetchCombinedDataForAsset(
   technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; 
   economicIndicatorData?: FetchedEconomicIndicatorData; 
   fetchedInterestRateData?: InterestRateData; 
+  economicEvents?: EconomicEvent[];
+  economicEventsError?: string;
   liveDataForChartAnalysis?: LiveDataForChartAnalysis;
   combinedError?: string;
 }> {
@@ -222,11 +228,18 @@ async function fetchCombinedDataForAsset(
         interestRatePromise = Promise.resolve({ error: `Asset ${asset.name} not configured for FRED interest rate fetching.`, sourceProvider: 'FRED' });
     }
 
-    const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData] = await Promise.all([
+    let economicEventsPromise: Promise<{ events: EconomicEvent[], error?: string }> = Promise.resolve({ events: [], error: "Tradays API key not provided." });
+    if (apiKeys.tradays) {
+        economicEventsPromise = fetchEconomicEvents(apiKeys.tradays);
+    }
+
+
+    const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData, fetchedEconomicEventsResult] = await Promise.all([
         marketApiDataPromise, 
         economicApiDataPromise, 
         newsApiPromise,
-        interestRatePromise
+        interestRatePromise,
+        economicEventsPromise
     ]);
     
     let dataErrors: string[] = [];
@@ -234,6 +247,7 @@ async function fetchCombinedDataForAsset(
     if (economicApiData.error) dataErrors.push(`Economic Data (${economicApiData.sourceProvider || 'Unknown'}): ${economicApiData.error}`);
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) dataErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
+    if (fetchedEconomicEventsResult.error) dataErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
     
     if (dataErrors.length > 0) combinedError = dataErrors.join('; ');
     
@@ -333,6 +347,8 @@ async function fetchCombinedDataForAsset(
     if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
     if (tradeRecommendation && tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) finalErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
+    if (fetchedEconomicEventsResult.error) finalErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
+
 
     const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
 
@@ -353,6 +369,8 @@ async function fetchCombinedDataForAsset(
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
         fetchedInterestRateData,
+        economicEvents: fetchedEconomicEventsResult.events,
+        economicEventsError: fetchedEconomicEventsResult.error,
         liveDataForChartAnalysis: liveDataForChart,
         combinedError: finalCombinedError || combinedError
     };
@@ -360,7 +378,7 @@ async function fetchCombinedDataForAsset(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     let finalCombinedError = `Unexpected error in data aggregation for ${asset.name}: ${errorMessage}`;
-    console.error(`Error in fetchCombinedDataForAsset for ${asset.name} (${timeframeId}):`, errorMessage);
+    console.error(`Error in fetchAllDashboardData for ${asset.name} (${timeframeId}):`, errorMessage);
     
     const defaultTechIndicators: ProcessedTechnicalIndicatorsData = {
         rsi: { value: undefined, status: 'N/A' },
@@ -375,6 +393,8 @@ async function fetchCombinedDataForAsset(
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },
         fetchedInterestRateData: { error: finalCombinedError, sourceProvider: 'FRED'},
+        economicEvents: [],
+        economicEventsError: finalCombinedError,
         liveDataForChartAnalysis: {},
         combinedError: finalCombinedError
     };
@@ -385,13 +405,15 @@ export default function HomePage() {
   const [selectedAsset, setSelectedAsset] = useState<Asset>(ASSETS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[4]);
   
-  const [aiData, setAiData] = useState<{
+  const [dashboardData, setDashboardData] = useState<{
     tradeRecommendation: GenerateTradeRecommendationOutput | null;
     newsSentiment: SummarizeNewsSentimentOutput | null;
     marketOverviewData?: MarketData;
     technicalIndicatorsData?: ProcessedTechnicalIndicatorsData;
     economicIndicatorData?: FetchedEconomicIndicatorData;
     fetchedInterestRateData?: InterestRateData;
+    economicEvents?: EconomicEvent[];
+    economicEventsError?: string;
     liveDataForChartAnalysis?: LiveDataForChartAnalysis;
     combinedError?: string;
   } | null>(null);
@@ -431,15 +453,19 @@ export default function HomePage() {
   const [tempFredApiKey, setTempFredApiKey] = useState('');
   const [showFredApiKey, setShowFredApiKey] = useState(false);
 
+  const [tradaysApiKey, setTradaysApiKey] = useState<string | null>(null);
+  const [tempTradaysKey, setTempTradaysKey] = useState('');
+  const [showTradaysKey, setShowTradaysKey] = useState(false);
+
 
   useEffect(() => {
     const initKey = (storageKey: string, defaultKey: string, setKeyFn: (key: string | null) => void, setTempKeyFn: (key: string) => void) => {
       let keyToUse = localStorage.getItem(storageKey);
-      if (!keyToUse) {
+      if (!keyToUse && defaultKey !== 'YOUR_TRADAYS_API_KEY_HERE') { // Don't set Tradays default if it's the placeholder
         keyToUse = defaultKey;
       }
-      setKeyFn(keyToUse || (defaultKey || null)); 
-      setTempKeyFn(keyToUse || defaultKey || '');
+      setKeyFn(keyToUse || (defaultKey === 'YOUR_TRADAYS_API_KEY_HERE' ? null : defaultKey || null));
+      setTempKeyFn(keyToUse || (defaultKey === 'YOUR_TRADAYS_API_KEY_HERE' ? '' : defaultKey || ''));
     };
 
     initKey('polygonApiKey', DEFAULT_POLYGON_KEY, setPolygonApiKey, setTempPolygonKey);
@@ -449,6 +475,7 @@ export default function HomePage() {
     initKey('exchangeRateApiKey', DEFAULT_EXCHANGERATE_API_KEY, setExchangeRateApiKey, setTempExchangeRateApiKey);
     initKey('newsApiKey', DEFAULT_NEWSAPI_KEY, setNewsApiKey, setTempNewsApiKey);
     initKey('fredApiKey', DEFAULT_FRED_KEY, setFredApiKey, setTempFredApiKey);
+    initKey('tradaysApiKey', DEFAULT_TRADAYS_KEY, setTradaysApiKey, setTempTradaysKey);
     
     setIsLoading(false); 
   }, []);
@@ -468,6 +495,7 @@ export default function HomePage() {
           exchangeRateApi: storageKey === 'exchangeRateApiKey' ? trimmedKey : exchangeRateApiKey,
           newsApi: storageKey === 'newsApiKey' ? trimmedKey : newsApiKey,
           fred: storageKey === 'fredApiKey' ? trimmedKey : fredApiKey,
+          tradays: storageKey === 'tradaysApiKey' ? trimmedKey : tradaysApiKey,
       };
       if (currentKeys.polygon || currentKeys.finnhub || currentKeys.twelvedata) { 
           loadData(selectedAsset, selectedTimeframe, currentKeys);
@@ -491,20 +519,21 @@ export default function HomePage() {
         exchangeRateApi?: string | null;
         newsApi?: string | null;
         fred?: string | null;
+        tradays?: string | null;
       }
     ) => {
     if (!currentApiKeys.polygon && !currentApiKeys.finnhub && !currentApiKeys.twelvedata) {
       setLastError("At least one Market Data API key (Polygon, Finnhub, or TwelveData) is required. Please set one to fetch data.");
       setIsLoading(false); 
-      setAiData(null); 
+      setDashboardData(null); 
       return;
     }
         
     setIsLoading(true);
     setLastError(null);
-    setAiData(null); 
-    const data = await fetchCombinedDataForAsset(asset, timeframe.id, currentApiKeys);
-    setAiData(data);
+    setDashboardData(null); 
+    const data = await fetchAllDashboardData(asset, timeframe.id, currentApiKeys);
+    setDashboardData(data);
     
     let errorMessages: string[] = [];
     if (data.combinedError) errorMessages.push(data.combinedError);
@@ -526,19 +555,20 @@ export default function HomePage() {
         exchangeRateApi: exchangeRateApiKey,
         newsApi: newsApiKey, 
         fred: fredApiKey,
+        tradays: tradaysApiKey,
     };
     if ((currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) && !isLoading && !isRefreshing) {
-      if (!aiData) { 
+      if (!dashboardData) { 
          loadData(selectedAsset, selectedTimeframe, currentApiKeys);
       }
     }
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, selectedAsset, selectedTimeframe, loadData, aiData, isLoading, isRefreshing]);
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, tradaysApiKey, selectedAsset, selectedTimeframe, loadData, dashboardData, isLoading, isRefreshing]);
 
 
   const handleAssetChange = (asset: Asset) => {
     if (asset.name !== selectedAsset.name) { 
       setSelectedAsset(asset);
-      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
+      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey, tradays: tradaysApiKey };
       if (currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) {
         loadData(asset, selectedTimeframe, currentApiKeys);
       }
@@ -548,7 +578,7 @@ export default function HomePage() {
   const handleTimeframeChange = (timeframe: typeof TIMEFRAMES[0]) => {
     if (timeframe.id !== selectedTimeframe.id) {
       setSelectedTimeframe(timeframe);
-      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
+      const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey, tradays: tradaysApiKey };
       if (currentApiKeys.polygon || currentApiKeys.finnhub || currentApiKeys.twelvedata) {
         loadData(selectedAsset, timeframe, currentApiKeys);
       }
@@ -556,22 +586,22 @@ export default function HomePage() {
   };
 
   const handleRefresh = useCallback(async () => {
-    const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey };
+    const currentApiKeys = { polygon: polygonApiKey, finnhub: finnhubApiKey, twelvedata: twelveDataApiKey, openExchangeRates: openExchangeRatesApiKey, exchangeRateApi: exchangeRateApiKey, newsApi: newsApiKey, fred: fredApiKey, tradays: tradaysApiKey };
     if (!currentApiKeys.polygon && !currentApiKeys.finnhub && !currentApiKeys.twelvedata) {
       toast({ title: "Market Data API Key Required", description: "Please set at least one market data API key (Polygon, Finnhub, or TwelveData).", variant: "destructive" });
       return;
     }
       setIsRefreshing(true);
       setLastError(null); 
-      const data = await fetchCombinedDataForAsset(selectedAsset, selectedTimeframe.id, currentApiKeys);
-      setAiData(data);
+      const data = await fetchAllDashboardData(selectedAsset, selectedTimeframe.id, currentApiKeys);
+      setDashboardData(data);
       if (data.combinedError) {
         setLastError(data.combinedError);
       } else {
          setLastError(null);
       }
       setIsRefreshing(false);
-  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, selectedAsset, selectedTimeframe, toast]);
+  }, [polygonApiKey, finnhubApiKey, twelveDataApiKey, openExchangeRatesApiKey, exchangeRateApiKey, newsApiKey, fredApiKey, tradaysApiKey, selectedAsset, selectedTimeframe, toast]);
 
   const renderCardSkeleton = (heightClass = "h-[250px]") => <Skeleton className={`${heightClass} w-full`} />;
 
@@ -581,7 +611,7 @@ export default function HomePage() {
 
 
   useEffect(() => {
-    if (!isAutoRefreshEnabled || isKeySetupPhase || isLoading || isRefreshing || !aiData) {
+    if (!isAutoRefreshEnabled || isKeySetupPhase || isLoading || isRefreshing || !dashboardData) {
       return; 
     }
 
@@ -611,7 +641,7 @@ export default function HomePage() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [selectedAsset, selectedTimeframe, handleRefresh, isKeySetupPhase, isLoading, isRefreshing, aiData, isAutoRefreshEnabled]);
+  }, [selectedAsset, selectedTimeframe, handleRefresh, isKeySetupPhase, isLoading, isRefreshing, dashboardData, isAutoRefreshEnabled]);
 
 
   const ApiKeyInputGroup = ({
@@ -662,12 +692,12 @@ export default function HomePage() {
         <div className="mb-6 p-4 border border-border rounded-lg bg-card shadow-md space-y-4">
             <h3 className="text-lg font-semibold text-foreground mb-2">API Key Configuration</h3>
             <p className="text-xs text-muted-foreground mb-3">
-                API keys are pre-filled and stored in your browser's local storage. Change them if needed.
+                API keys are pre-filled (except Tradays) and stored in your browser's local storage. Change them if needed.
                 Market data tries Polygon.io &rarr; Finnhub.io &rarr; TwelveData.
                 Economic data tries OpenExchangeRates.org &rarr; ExchangeRate-API.com.
-                News headlines from NewsAPI.org. Interest rates from FRED.
+                News headlines from NewsAPI.org. Interest rates from FRED. Economic calendar from Tradays.com.
             </p>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-6">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6">
                 <ApiKeyInputGroup
                     label="Polygon.io API Key (Market Data):"
                     id="polygonKeyInput"
@@ -745,6 +775,17 @@ export default function HomePage() {
                     placeholder="Enter FRED API Key"
                     providerName="FRED"
                 />
+                <ApiKeyInputGroup
+                    label="Tradays.com API Key (Economic Calendar):"
+                    id="tradaysApiKeyInput"
+                    value={tempTradaysKey}
+                    onChange={(e) => setTempTradaysKey(e.target.value)}
+                    showKey={showTradaysKey}
+                    onToggleShowKey={() => setShowTradaysKey(!showTradaysKey)}
+                    onSetKey={() => handleSetKey(tempTradaysKey, setTradaysApiKey, 'tradaysApiKey', 'Tradays.com')}
+                    placeholder="Enter Tradays.com API Key"
+                    providerName="Tradays.com"
+                />
             </div>
              <div className="text-xs text-muted-foreground p-2 bg-muted/30 rounded-md mt-2">
                 <AlertTriangle size={14} className="inline mr-1 text-destructive" />
@@ -811,17 +852,17 @@ export default function HomePage() {
           </div>
         </div>
         
-        {aiData?.fetchedInterestRateData && aiData.fetchedInterestRateData.rate !== undefined && (
+        {dashboardData?.fetchedInterestRateData && dashboardData.fetchedInterestRateData.rate !== undefined && (
           <div className="mb-4 p-3 border border-border rounded-lg bg-card/50 shadow-sm text-sm">
             <div className="flex items-center gap-2 text-primary">
               <Landmark size={18} />
               <span className="font-semibold">
-                Live Interest Rate ({aiData.fetchedInterestRateData.seriesId || selectedAsset.economicIds.primaryCurrencyForInterestRate || 'N/A'}):
+                Live Interest Rate ({dashboardData.fetchedInterestRateData.seriesId || selectedAsset.economicIds.primaryCurrencyForInterestRate || 'N/A'}):
               </span>
-              <span className="text-foreground font-bold">{aiData.fetchedInterestRateData.rate?.toFixed(2)}%</span>
+              <span className="text-foreground font-bold">{dashboardData.fetchedInterestRateData.rate?.toFixed(2)}%</span>
             </div>
             <p className="text-xs text-muted-foreground ml-7">
-              Source: FRED | Last Updated: {aiData.fetchedInterestRateData.lastUpdated || 'N/A'}
+              Source: FRED | Last Updated: {dashboardData.fetchedInterestRateData.lastUpdated || 'N/A'}
             </p>
           </div>
         )}
@@ -858,35 +899,36 @@ export default function HomePage() {
             <div className="lg:col-span-1">{renderCardSkeleton("h-[350px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
             <div className="lg:col-span-1">{renderCardSkeleton("h-[250px]")}</div>
-            <div className="lg:col-span-3">{renderCardSkeleton("h-[400px]")}</div>
+            <div className="lg:col-span-3">{renderCardSkeleton("h-[400px]")}</div> {/* Chart Analyzer / Economic Calendar */}
+            <div className="lg:col-span-3">{renderCardSkeleton("h-[300px]")}</div> {/* Economic Calendar if Chart Analyzer is also there */}
           </div>
-        ) : aiData && !isKeySetupPhase ? (
+        ) : dashboardData && !isKeySetupPhase ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <SignalDisplayCard data={aiData?.tradeRecommendation} isLoading={isLoading || isRefreshing} />
+              <SignalDisplayCard data={dashboardData?.tradeRecommendation} isLoading={isLoading || isRefreshing} />
             </div>
             <div className="lg:row-span-1">
               <MarketOverviewCard
-                initialData={aiData?.marketOverviewData} 
+                initialData={dashboardData?.marketOverviewData} 
                 key={`${selectedAsset.name}-${selectedTimeframe.id}-market`}
               />
             </div>
             <div className="lg:col-span-1">
               <TechnicalIndicatorsCard
-                initialData={aiData?.technicalIndicatorsData} 
+                initialData={dashboardData?.technicalIndicatorsData} 
                 key={`${selectedAsset.name}-${selectedTimeframe.id}-tech`}
               />
             </div>
             <div className="lg:col-span-1">
               <SentimentAnalysisCard
-                data={aiData?.newsSentiment}
+                data={dashboardData?.newsSentiment}
                 isLoading={isLoading || isRefreshing}
                 currencyPair={selectedAsset.name}
               />
             </div>
             <div className="lg:col-span-1">
               <EconomicIndicatorCard
-                initialData={aiData?.economicIndicatorData} 
+                initialData={dashboardData?.economicIndicatorData} 
                  key={`${selectedAsset.name}-${selectedTimeframe.id}-econ`}
               />
             </div>
@@ -895,8 +937,17 @@ export default function HomePage() {
                     <ChartAnalyzerCard 
                         selectedAsset={selectedAsset}
                         selectedTimeframe={selectedTimeframe}
-                        liveData={aiData.liveDataForChartAnalysis}
+                        liveData={dashboardData.liveDataForChartAnalysis}
                         onAnalyzeChart={analyzeChartImage}
+                    />
+                </div>
+            )}
+            {tradaysApiKey && (
+                 <div className="lg:col-span-3">
+                    <EconomicCalendarCard
+                        events={dashboardData.economicEvents || []}
+                        isLoading={isLoading || isRefreshing}
+                        error={dashboardData.economicEventsError}
                     />
                 </div>
             )}
@@ -913,7 +964,7 @@ export default function HomePage() {
       <footer className="text-center p-4 text-sm text-muted-foreground border-t border-border/50">
         Market data via Polygon.io, Finnhub.io, or TwelveData.
         Economic data via OpenExchangeRates.org or ExchangeRate-API.com.
-        News headlines via NewsAPI.org. Interest rate data via FRED®.
+        News headlines via NewsAPI.org. Interest rate data via FRED®. Economic Calendar via Tradays.com.
         © {new Date().getFullYear()} ForeSight AI. All rights reserved.
       </footer>
     </div>
