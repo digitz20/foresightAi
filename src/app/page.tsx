@@ -29,7 +29,7 @@ import { fetchMarketData, MarketData } from '@/app/actions/fetch-market-data';
 import { fetchEconomicData } from '@/app/actions/fetch-economic-data';
 import { fetchNewsHeadlines, NewsHeadlinesResult } from '@/app/actions/fetch-news-headlines';
 import { fetchInterestRate, InterestRateData } from '@/app/actions/fetch-interest-rate';
-import { fetchEconomicEvents, EconomicEvent } from '@/app/actions/fetch-economic-events';
+// Removed: import { fetchEconomicEvents, EconomicEvent } from '@/app/actions/fetch-economic-events';
 
 
 interface Asset {
@@ -194,8 +194,8 @@ async function fetchAllDashboardData(
   technicalIndicatorsData?: ProcessedTechnicalIndicatorsData; 
   economicIndicatorData?: FetchedEconomicIndicatorData; 
   fetchedInterestRateData?: InterestRateData; 
-  economicEvents?: EconomicEvent[];
-  economicEventsError?: string;
+  // economicEvents?: EconomicEvent[]; // Removed
+  // economicEventsError?: string; // Removed
   liveDataForChartAnalysis?: LiveDataForChartAnalysis;
   combinedError?: string;
 }> {
@@ -226,15 +226,15 @@ async function fetchAllDashboardData(
         interestRatePromise = Promise.resolve({ error: `Asset ${asset.name} not configured for FRED interest rate fetching.`, sourceProvider: 'FRED' });
     }
 
-    const economicEventsPromise = fetchEconomicEvents();
+    // Removed: const economicEventsPromise = fetchEconomicEvents();
 
 
-    const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData, fetchedEconomicEventsResult] = await Promise.all([
+    const [marketApiData, economicApiData, fetchedNewsData, fetchedInterestRateData] = await Promise.all([
         marketApiDataPromise, 
         economicApiDataPromise, 
         newsApiPromise,
         interestRatePromise,
-        economicEventsPromise
+        // Removed: fetchedEconomicEventsResult
     ]);
     
     let dataErrors: string[] = [];
@@ -242,7 +242,7 @@ async function fetchAllDashboardData(
     if (economicApiData.error) dataErrors.push(`Economic Data (${economicApiData.sourceProvider || 'Unknown'}): ${economicApiData.error}`);
     if (fetchedNewsData.error && (!fetchedNewsData.headlines || fetchedNewsData.headlines.length === 0)) dataErrors.push(`News Headlines (${fetchedNewsData.sourceProvider || 'NewsAPI.org'}): ${fetchedNewsData.error}`);
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) dataErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
-    if (fetchedEconomicEventsResult.error) dataErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
+    // Removed: if (fetchedEconomicEventsResult.error) dataErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
     
     if (dataErrors.length > 0) combinedError = dataErrors.join('; ');
     
@@ -342,7 +342,7 @@ async function fetchAllDashboardData(
     if (newsSentiment.error) finalErrors.push(`Sentiment AI: ${newsSentiment.error}`);
     if (tradeRecommendation && tradeRecommendation.error) finalErrors.push(`Trade AI: ${tradeRecommendation.error}`);
     if (fetchedInterestRateData.error && fetchedInterestRateData.rate === undefined) finalErrors.push(`Interest Rate (FRED): ${fetchedInterestRateData.error}`);
-    if (fetchedEconomicEventsResult.error) finalErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
+    // Removed: if (fetchedEconomicEventsResult.error) finalErrors.push(`Economic Calendar (Tradays): ${fetchedEconomicEventsResult.error}`);
 
 
     const finalCombinedError = finalErrors.length > 0 ? finalErrors.join('; ') : undefined;
@@ -364,8 +364,8 @@ async function fetchAllDashboardData(
         technicalIndicatorsData: processedTechIndicators, 
         economicIndicatorData: finalEconomicData,
         fetchedInterestRateData,
-        economicEvents: fetchedEconomicEventsResult.events,
-        economicEventsError: fetchedEconomicEventsResult.error,
+        // economicEvents: fetchedEconomicEventsResult.events, // Removed
+        // economicEventsError: fetchedEconomicEventsResult.error, // Removed
         liveDataForChartAnalysis: liveDataForChart,
         combinedError: finalCombinedError || combinedError
     };
@@ -388,8 +388,8 @@ async function fetchAllDashboardData(
         technicalIndicatorsData: defaultTechIndicators,
         economicIndicatorData: { indicatorName: 'N/A', value: 'N/A', sourceProvider: 'Unknown', error: finalCombinedError },
         fetchedInterestRateData: { error: finalCombinedError, sourceProvider: 'FRED'},
-        economicEvents: [],
-        economicEventsError: finalCombinedError,
+        // economicEvents: [], // Removed
+        // economicEventsError: finalCombinedError, // Removed
         liveDataForChartAnalysis: {},
         combinedError: finalCombinedError
     };
@@ -407,8 +407,8 @@ export default function HomePage() {
     technicalIndicatorsData?: ProcessedTechnicalIndicatorsData;
     economicIndicatorData?: FetchedEconomicIndicatorData;
     fetchedInterestRateData?: InterestRateData;
-    economicEvents?: EconomicEvent[];
-    economicEventsError?: string;
+    // economicEvents?: EconomicEvent[]; // Removed
+    // economicEventsError?: string; // Removed
     liveDataForChartAnalysis?: LiveDataForChartAnalysis;
     combinedError?: string;
   } | null>(null);
@@ -682,7 +682,7 @@ export default function HomePage() {
                 API keys are pre-filled and stored in your browser's local storage. Change them if needed.
                 Market data tries Polygon.io &rarr; Finnhub.io &rarr; TwelveData.
                 Economic data tries OpenExchangeRates.org &rarr; ExchangeRate-API.com.
-                News headlines from NewsAPI.org. Interest rates from FRED. Economic calendar from Tradays.com (public access).
+                News headlines from NewsAPI.org. Interest rates from FRED. Economic calendar widget from Tradays.com.
             </p>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6">
                 <ApiKeyInputGroup
@@ -919,11 +919,7 @@ export default function HomePage() {
                 </div>
             )}
             <div className="lg:col-span-3">
-                <EconomicCalendarCard
-                    events={dashboardData.economicEvents || []}
-                    isLoading={isLoading || isRefreshing}
-                    error={dashboardData.economicEventsError}
-                />
+                <EconomicCalendarCard />
             </div>
           </div>
         ) : !isKeySetupPhase && !isLoading ? ( 
